@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#030c2c" />
+    <meta
+      name="description"
+      content="HealNet AI — Predict, Prevent, Personalize"
+    />
+    <title>HealNet — AI Health Platform</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: #030c2c;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      /* Loading screen before React loads */
+      #splash {
+        position: fixed;
+        inset: 0;
+        background: #030c2c;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        transition: opacity 0.5s;
+      }
+      #splash h1 {
+        color: #3BC9E8;
+        font-size: 32px;
+        font-weight: 800;
+        letter-spacing: -1px;
+      }
+      #splash p {
+        color: rgba(232,244,248,0.4);
+        font-size: 12px;
+        letter-spacing: 3px;
+        margin-top: 8px;
+      }
+      .spinner {
+        width: 36px;
+        height: 36px;
+        border: 3px solid rgba(59,201,232,0.2);
+        border-top-color: #3BC9E8;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 20px;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Splash screen shown before React loads -->
+    <div id="splash">
+      <div class="spinner"></div>
+      <h1>🩺 HealNet</h1>
+      <p>PREDICT · PREVENT · PERSONALIZE</p>
+    </div>
+
+    <!-- React mounts here -->
+    <div id="root"></div>
+
+    <script>
+      // Hide splash once React has loaded
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          var splash = document.getElementById('splash');
+          if (splash) {
+            splash.style.opacity = '0';
+            setTimeout(function () { splash.remove(); }, 500);
+          }
+        }, 800);
+      });
+    </script>
+  </body>
+</html>
