@@ -8,7 +8,7 @@ router = APIRouter()
 
 class VitalCreate(BaseModel):
     patient_id:       str
-    source:           Optional[str]   = "manual"
+    source:           str            = "manual"
     device_id:        Optional[str]   = None
     heart_rate:       Optional[float] = None
     spo2:             Optional[float] = None
@@ -18,6 +18,8 @@ class VitalCreate(BaseModel):
     blood_sugar:      Optional[float] = None
     respiratory_rate: Optional[float] = None
     bmi:              Optional[float] = None
+
+    model_config = {"extra": "ignore"}
 
 
 @router.get("/{patient_id}")
@@ -59,7 +61,7 @@ def record_vital(body: VitalCreate):
     if not pat.data:
         raise HTTPException(status_code=404, detail="Patient not found")
 
-    result = supabase.table("vitals_readings").insert(body.dict()).execute()
+    result = supabase.table("vitals_readings").insert(body.model_dump()).execute()
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to save vitals")
 
@@ -83,32 +85,42 @@ def check_alerts(v: VitalCreate) -> list:
 
     if v.heart_rate is not None:
         if v.heart_rate > 120 or v.heart_rate < 40:
-            add("heart_rate", v.heart_rate, "danger", "Critical", f"Heart rate {v.heart_rate} bpm is critically abnormal!")
+            add("heart_rate", v.heart_rate, "danger", "Critical",
+                f"Heart rate {v.heart_rate} bpm is critically abnormal!")
         elif v.heart_rate > 100 or v.heart_rate < 55:
-            add("heart_rate", v.heart_rate, "warning", "Warning", f"Heart rate {v.heart_rate} bpm needs attention.")
+            add("heart_rate", v.heart_rate, "warning", "Warning",
+                f"Heart rate {v.heart_rate} bpm needs attention.")
 
     if v.spo2 is not None:
         if v.spo2 < 90:
-            add("spo2", v.spo2, "danger", "Critical", f"SpO2 {v.spo2}% is dangerously low!")
+            add("spo2", v.spo2, "danger", "Critical",
+                f"SpO2 {v.spo2}% is dangerously low!")
         elif v.spo2 < 95:
-            add("spo2", v.spo2, "warning", "Warning", f"SpO2 {v.spo2}% is below normal.")
+            add("spo2", v.spo2, "warning", "Warning",
+                f"SpO2 {v.spo2}% is below normal.")
 
     if v.systolic_bp is not None:
         if v.systolic_bp > 180 or v.systolic_bp < 80:
-            add("systolic_bp", v.systolic_bp, "danger", "Critical", f"BP {v.systolic_bp} mmHg is critically abnormal!")
+            add("systolic_bp", v.systolic_bp, "danger", "Critical",
+                f"BP {v.systolic_bp} mmHg is critically abnormal!")
         elif v.systolic_bp > 140 or v.systolic_bp < 90:
-            add("systolic_bp", v.systolic_bp, "warning", "Warning", f"BP {v.systolic_bp} mmHg needs attention.")
+            add("systolic_bp", v.systolic_bp, "warning", "Warning",
+                f"BP {v.systolic_bp} mmHg needs attention.")
 
     if v.temperature is not None:
         if v.temperature > 40 or v.temperature < 35:
-            add("temperature", v.temperature, "danger", "Critical", f"Temperature {v.temperature}°C is critically abnormal!")
+            add("temperature", v.temperature, "danger", "Critical",
+                f"Temperature {v.temperature}°C is critically abnormal!")
         elif v.temperature > 38.5 or v.temperature < 36:
-            add("temperature", v.temperature, "warning", "Warning", f"Temperature {v.temperature}°C is abnormal.")
+            add("temperature", v.temperature, "warning", "Warning",
+                f"Temperature {v.temperature}°C is abnormal.")
 
     if v.blood_sugar is not None:
         if v.blood_sugar > 300 or v.blood_sugar < 50:
-            add("blood_sugar", v.blood_sugar, "danger", "Critical", f"Blood sugar {v.blood_sugar} mg/dL is critically abnormal!")
+            add("blood_sugar", v.blood_sugar, "danger", "Critical",
+                f"Blood sugar {v.blood_sugar} mg/dL is critically abnormal!")
         elif v.blood_sugar > 180 or v.blood_sugar < 70:
-            add("blood_sugar", v.blood_sugar, "warning", "Warning", f"Blood sugar {v.blood_sugar} mg/dL needs attention.")
+            add("blood_sugar", v.blood_sugar, "warning", "Warning",
+                f"Blood sugar {v.blood_sugar} mg/dL needs attention.")
 
     return alerts
