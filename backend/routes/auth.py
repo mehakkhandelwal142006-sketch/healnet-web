@@ -7,11 +7,9 @@ from datetime import datetime, timedelta
 import jwt
 
 router = APIRouter()
-
 JWT_SECRET = os.getenv("JWT_SECRET", "healnet-secret-key")
 
 
-# ── HELPERS ───────────────────────────────────────────────────────
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -26,13 +24,17 @@ def create_token(user_id: str, email: str, kind: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 
-# ── SIGNUP ────────────────────────────────────────────────────────
 class SignupRequest(BaseModel):
     name: str
     email: str
     password: str
-    kind: Optional[str] = "solo"
+    kind: str = "solo"
     org_id: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 
 @router.post("/signup")
@@ -66,12 +68,6 @@ def signup(body: SignupRequest):
     }
 
 
-# ── LOGIN ─────────────────────────────────────────────────────────
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-
 @router.post("/login")
 def login(body: LoginRequest):
     result = supabase.table("users").select("*").eq("email", body.email).execute()
@@ -80,7 +76,6 @@ def login(body: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     user = result.data[0]
-
     if user["password_hash"] != hash_password(body.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
@@ -100,7 +95,6 @@ def login(body: LoginRequest):
     }
 
 
-# ── GET CURRENT USER ──────────────────────────────────────────────
 @router.get("/me")
 def get_me(authorization: str = Header(...)):
     try:
@@ -109,11 +103,9 @@ def get_me(authorization: str = Header(...)):
         result  = supabase.table("users").select(
             "id,email,name,kind,org_id,created_at"
         ).eq("id", payload["sub"]).execute()
-
         if not result.data:
             raise HTTPException(status_code=404, detail="User not found")
         return result.data[0]
-
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except Exception:
