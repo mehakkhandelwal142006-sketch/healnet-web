@@ -9,22 +9,24 @@ router = APIRouter()
 class PatientCreate(BaseModel):
     patient_id:          str
     name:                str
-    age:                 Optional[int]  = None
-    gender:              Optional[str]  = None
-    contact:             Optional[str]  = None
-    blood_group:         Optional[str]  = None
-    email:               Optional[str]  = None
-    address:             Optional[str]  = None
-    registered_by:       Optional[str]  = None
-    allergies:           Optional[str]  = None
-    chronic_conditions:  Optional[str]  = None
-    current_medications: Optional[str]  = None
-    past_surgeries:      Optional[str]  = None
-    family_history:      Optional[str]  = None
-    medical_notes:       Optional[str]  = None
-    emergency_name:      Optional[str]  = None
-    emergency_relation:  Optional[str]  = None
-    emergency_contact:   Optional[str]  = None
+    age:                 Optional[int] = None
+    gender:              Optional[str] = None
+    contact:             Optional[str] = None
+    blood_group:         Optional[str] = None
+    email:               Optional[str] = None
+    address:             Optional[str] = None
+    registered_by:       Optional[str] = None
+    allergies:           Optional[str] = None
+    chronic_conditions:  Optional[str] = None
+    current_medications: Optional[str] = None
+    past_surgeries:      Optional[str] = None
+    family_history:      Optional[str] = None
+    medical_notes:       Optional[str] = None
+    emergency_name:      Optional[str] = None
+    emergency_relation:  Optional[str] = None
+    emergency_contact:   Optional[str] = None
+
+    model_config = {"extra": "ignore"}
 
 
 @router.get("/")
@@ -73,7 +75,7 @@ def create_patient(body: PatientCreate):
     if existing.data:
         raise HTTPException(status_code=400, detail="Patient ID already exists")
 
-    result = supabase.table("patients").insert(body.dict()).execute()
+    result = supabase.table("patients").insert(body.model_dump()).execute()
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to create patient")
     return result.data[0]
