@@ -1,8 +1,7 @@
-fastapi==0.104.1
+fastapi==0.115.0
 uvicorn==0.24.0
-supabase==1.2.0
+supabase==2.3.4
 python-dotenv==1.0.0
-pydantic==1.10.13
-email-validator==2.1.0
+pydantic==2.5.3
 PyJWT==2.8.0
 python-multipart==0.0.6
