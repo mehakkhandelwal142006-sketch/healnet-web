@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Header
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
+from typing import Optional
 from database import supabase
 import hashlib, uuid, os
 from datetime import datetime, timedelta
@@ -28,15 +29,14 @@ def create_token(user_id: str, email: str, kind: str) -> str:
 # ── SIGNUP ────────────────────────────────────────────────────────
 class SignupRequest(BaseModel):
     name: str
-    email: EmailStr
+    email: str
     password: str
-    kind: str = "solo"
-    org_id: str = None
+    kind: Optional[str] = "solo"
+    org_id: Optional[str] = None
 
 
 @router.post("/signup")
 def signup(body: SignupRequest):
-    # Check if email already exists
     existing = supabase.table("users").select("id").eq("email", body.email).execute()
     if existing.data:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -68,7 +68,7 @@ def signup(body: SignupRequest):
 
 # ── LOGIN ─────────────────────────────────────────────────────────
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 
@@ -84,7 +84,6 @@ def login(body: LoginRequest):
     if user["password_hash"] != hash_password(body.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    # Update last login time
     supabase.table("users").update({
         "last_login": datetime.utcnow().isoformat()
     }).eq("id", user["id"]).execute()
@@ -116,6 +115,6 @@ def get_me(authorization: str = Header(...)):
         return result.data[0]
 
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired — please log in again")
+        raise HTTPException(status_code=401, detail="Token expired")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
