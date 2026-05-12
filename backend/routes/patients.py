@@ -6,7 +6,6 @@ from database import supabase
 router = APIRouter()
 
 
-# ── MODEL ─────────────────────────────────────────────────────────
 class PatientCreate(BaseModel):
     patient_id:          str
     name:                str
@@ -28,7 +27,6 @@ class PatientCreate(BaseModel):
     emergency_contact:   Optional[str]  = None
 
 
-# ── GET ALL PATIENTS ──────────────────────────────────────────────
 @router.get("/")
 def get_all_patients():
     result = (
@@ -40,7 +38,17 @@ def get_all_patients():
     return result.data
 
 
-# ── GET SINGLE PATIENT ────────────────────────────────────────────
+@router.get("/search/{query}")
+def search_patients(query: str):
+    result = (
+        supabase.table("patients")
+        .select("*")
+        .ilike("name", f"%{query}%")
+        .execute()
+    )
+    return result.data
+
+
 @router.get("/{patient_id}")
 def get_patient(patient_id: str):
     result = (
@@ -54,22 +62,8 @@ def get_patient(patient_id: str):
     return result.data[0]
 
 
-# ── SEARCH PATIENTS ───────────────────────────────────────────────
-@router.get("/search/{query}")
-def search_patients(query: str):
-    result = (
-        supabase.table("patients")
-        .select("*")
-        .ilike("name", f"%{query}%")
-        .execute()
-    )
-    return result.data
-
-
-# ── CREATE PATIENT ────────────────────────────────────────────────
 @router.post("/")
 def create_patient(body: PatientCreate):
-    # Check if patient ID already exists
     existing = (
         supabase.table("patients")
         .select("patient_id")
@@ -85,10 +79,9 @@ def create_patient(body: PatientCreate):
     return result.data[0]
 
 
-# ── UPDATE PATIENT ────────────────────────────────────────────────
 @router.put("/{patient_id}")
 def update_patient(patient_id: str, body: dict):
-    body.pop("patient_id", None)  # don't allow changing the ID
+    body.pop("patient_id", None)
     result = (
         supabase.table("patients")
         .update(body)
@@ -100,7 +93,6 @@ def update_patient(patient_id: str, body: dict):
     return result.data[0]
 
 
-# ── DELETE PATIENT ────────────────────────────────────────────────
 @router.delete("/{patient_id}")
 def delete_patient(patient_id: str):
     supabase.table("patients").delete().eq("patient_id", patient_id).execute()
