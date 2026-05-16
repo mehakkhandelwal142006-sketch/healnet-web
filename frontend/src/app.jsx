@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { authAPI, patientsAPI, vitalsAPI, alertsAPI } from "./services/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import AIPanel    from "./pages/AIPanel";
-import PupilPage  from "./pages/PupilPage";
-import CameraPage from "./pages/CameraPage";
+import AIPanel    from "./pages/aipanel";
+import PupilPage  from "./pages/pupilpage";
+import CameraPage from "./pages/camerapage";
 
 // ── THEME ─────────────────────────────────────────────────────────
 const C = {
