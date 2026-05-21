@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { authAPI, patientsAPI, vitalsAPI, alertsAPI } from "./services/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import AIPanel    from "./pages/aipanel";
-import PupilPage  from "./pages/pupilpage";
-import CameraPage from "./pages/camerapage";
+import AIPanel        from "./pages/aipanel";
+import PupilPage      from "./pages/pupilpage";
+import CameraPage     from "./pages/camerapage";
+import SmartWatchPage from "./pages/smartwatch";
 
 // ── THEME ─────────────────────────────────────────────────────────
 const C = {
@@ -259,7 +260,7 @@ function LoginPage({ onLogin }) {
             IoTrenetics Solutions Pvt. Ltd.
           </div>
           <div style={{ color: C.muted, fontSize: 10, marginTop: 4 }}>
-            
+            © 2024 All rights reserved
           </div>
         </div>
 
@@ -332,7 +333,8 @@ function Dashboard({ user, onLogout }) {
     { id: "vitals",   label: "Add Vitals",      icon: "💓" },
     { id: "ai",       label: "AI Insights",     icon: "🤖" },
     { id: "pupil",    label: "Pupil Detection", icon: "👁"  },
-    { id: "camera",   label: "Camera Vitals",   icon: "📷" },
+    { id: "camera",     label: "Camera Vitals",   icon: "📷" },
+    { id: "smartwatch", label: "Smartwatch",       icon: "⌚" },
   ];
 
   const inputStyle = {
@@ -708,6 +710,9 @@ function Dashboard({ user, onLogout }) {
 
             {/* ── CAMERA VITALS ─────────────────────────────────── */}
             {page === "camera" && <CameraPage />}
+
+            {/* ── SMARTWATCH ────────────────────────────────────── */}
+            {page === "smartwatch" && <SmartWatchPage />}
           </>
         )}
       </div>
