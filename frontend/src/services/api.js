@@ -79,3 +79,17 @@ export const pupilAPI = {
 };
 
 export default API;
+
+// ── ADD THIS TO THE BOTTOM OF frontend/src/services/api.js ───────
+// After the pupilAPI section, add:
+
+export const smartwatchAPI = {
+  uploadCSV: (file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return API.post("/smartwatch/upload-csv", form);
+  },
+  googleFitAuthUrl: ()        => API.get("/smartwatch/google-fit/auth-url"),
+  googleFitExchange: (code)   => API.post("/smartwatch/google-fit/exchange", { code }),
+  googleFitData: (token, days) => API.post("/smartwatch/google-fit/data", { token, days }),
+};
