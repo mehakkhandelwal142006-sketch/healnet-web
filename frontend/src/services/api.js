@@ -5,6 +5,7 @@ const BASE_URL = process.env.REACT_APP_API_URL || "https://healnet-web-productio
 const API = axios.create({
   baseURL: BASE_URL,
 });
+
 // ── Auto-attach token to every request ───────────────────────────
 API.interceptors.request.use((config) => {
   const token = localStorage.getItem("healnet_token");
@@ -27,19 +28,19 @@ API.interceptors.response.use(
 
 // ── AUTH ──────────────────────────────────────────────────────────
 export const authAPI = {
-  login:  (email, password)              => API.post("/auth/login",  { email, password }),
-  signup: (name, email, password, kind)  => API.post("/auth/signup", { name, email, password, kind }),
-  me:     ()                             => API.get("/auth/me"),
+  login:  (email, password)             => API.post("/auth/login",  { email, password }),
+  signup: (name, email, password, kind) => API.post("/auth/signup", { name, email, password, kind }),
+  me:     ()                            => API.get("/auth/me"),
 };
 
 // ── PATIENTS ──────────────────────────────────────────────────────
 export const patientsAPI = {
-  getAll:  ()           => API.get("/patients/"),
-  getOne:  (id)         => API.get(`/patients/${id}`),
-  create:  (data)       => API.post("/patients/", data),
-  update:  (id, data)   => API.put(`/patients/${id}`, data),
-  delete:  (id)         => API.delete(`/patients/${id}`),
-  search:  (query)      => API.get(`/patients/search/${query}`),
+  getAll:  ()          => API.get("/patients/"),
+  getOne:  (id)        => API.get(`/patients/${id}`),
+  create:  (data)      => API.post("/patients/", data),
+  update:  (id, data)  => API.put(`/patients/${id}`, data),
+  delete:  (id)        => API.delete(`/patients/${id}`),
+  search:  (query)     => API.get(`/patients/search/${query}`),
 };
 
 // ── VITALS ────────────────────────────────────────────────────────
@@ -78,18 +79,32 @@ export const pupilAPI = {
   },
 };
 
-export default API;
-
-// ── ADD THIS TO THE BOTTOM OF frontend/src/services/api.js ───────
-// After the pupilAPI section, add:
-
+// ── SMARTWATCH + GOOGLE FIT ───────────────────────────────────────
 export const smartwatchAPI = {
+  // CSV upload — works with all smartwatches
   uploadCSV: (file) => {
     const form = new FormData();
     form.append("file", file);
     return API.post("/smartwatch/upload-csv", form);
   },
-  googleFitAuthUrl: ()        => API.get("/smartwatch/google-fit/auth-url"),
-  googleFitExchange: (code)   => API.post("/smartwatch/google-fit/exchange", { code }),
-  googleFitData: (token, days) => API.post("/smartwatch/google-fit/data", { token, days }),
+  // Google Fit
+  googleFitStatus:   ()            => API.get("/smartwatch/google-fit/status"),
+  googleFitAuthUrl:  ()            => API.get("/smartwatch/google-fit/auth-url"),
+  googleFitExchange: (code)        => API.post("/smartwatch/google-fit/exchange", { code }),
+  googleFitData:     (token, days) => API.post("/smartwatch/google-fit/data", { token, days }),
 };
+
+// ── REPORTS ───────────────────────────────────────────────────────
+export const reportsAPI = {
+  generate: (patientId) => API.get(`/reports/${patientId}`, { responseType: "blob" }),
+};
+
+// ── EMAIL ALERTS ──────────────────────────────────────────────────
+export const emailAPI = {
+  sendAlert: (patientId, recipient, patientName) =>
+    API.post("/email/send", { patient_id: patientId, recipient, patient_name: patientName }),
+  testEmail: (email) =>
+    API.post("/email/test", { email }),
+};
+
+export default API;
