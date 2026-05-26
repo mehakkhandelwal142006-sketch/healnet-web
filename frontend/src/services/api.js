@@ -2,18 +2,14 @@ import axios from "axios";
 
 const BASE_URL = process.env.REACT_APP_API_URL || "https://healnet-web-production.up.railway.app/api";
 
-const API = axios.create({
-  baseURL: BASE_URL,
-});
+const API = axios.create({ baseURL: BASE_URL });
 
-// ── Auto-attach token to every request ───────────────────────────
 API.interceptors.request.use((config) => {
   const token = localStorage.getItem("healnet_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
-// ── Auto-logout on 401 ────────────────────────────────────────────
 API.interceptors.response.use(
   (res) => res,
   (err) => {
@@ -26,14 +22,12 @@ API.interceptors.response.use(
   }
 );
 
-// ── AUTH ──────────────────────────────────────────────────────────
 export const authAPI = {
   login:  (email, password)             => API.post("/auth/login",  { email, password }),
   signup: (name, email, password, kind) => API.post("/auth/signup", { name, email, password, kind }),
   me:     ()                            => API.get("/auth/me"),
 };
 
-// ── PATIENTS ──────────────────────────────────────────────────────
 export const patientsAPI = {
   getAll:  ()          => API.get("/patients/"),
   getOne:  (id)        => API.get(`/patients/${id}`),
@@ -43,14 +37,12 @@ export const patientsAPI = {
   search:  (query)     => API.get(`/patients/search/${query}`),
 };
 
-// ── VITALS ────────────────────────────────────────────────────────
 export const vitalsAPI = {
   getForPatient: (id, limit = 20) => API.get(`/vitals/${id}?limit=${limit}`),
   getLatest:     (id)             => API.get(`/vitals/${id}/latest`),
   record:        (data)           => API.post("/vitals/", data),
 };
 
-// ── ALERTS ────────────────────────────────────────────────────────
 export const alertsAPI = {
   getAll:        (unackedOnly = false) => API.get(`/alerts/?unacknowledged_only=${unackedOnly}`),
   getForPatient: (id)                  => API.get(`/alerts/${id}`),
@@ -58,13 +50,11 @@ export const alertsAPI = {
   stats:         ()                    => API.get("/alerts/stats/summary"),
 };
 
-// ── AI ────────────────────────────────────────────────────────────
 export const aiAPI = {
   analyze:       (patientId) => API.get(`/ai/${patientId}`),
   analyzeCustom: (data)      => API.post("/ai/analyze", data),
 };
 
-// ── PUPIL ─────────────────────────────────────────────────────────
 export const pupilAPI = {
   analyzeSingle: (file) => {
     const form = new FormData();
@@ -79,32 +69,27 @@ export const pupilAPI = {
   },
 };
 
-// ── SMARTWATCH + GOOGLE FIT ───────────────────────────────────────
 export const smartwatchAPI = {
-  // CSV upload — works with all smartwatches
-  uploadCSV: (file) => {
-    const form = new FormData();
-    form.append("file", file);
-    return API.post("/smartwatch/upload-csv", form);
-  },
-  // Google Fit
-  googleFitStatus:   ()            => API.get("/smartwatch/google-fit/status"),
-  googleFitAuthUrl:  ()            => API.get("/smartwatch/google-fit/auth-url"),
-  googleFitExchange: (code)        => API.post("/smartwatch/google-fit/exchange", { code }),
-  googleFitData:     (token, days) => API.post("/smartwatch/google-fit/data", { token, days }),
+  uploadCSV:         (file)         => { const f = new FormData(); f.append("file", file); return API.post("/smartwatch/upload-csv", f); },
+  googleFitStatus:   ()             => API.get("/smartwatch/google-fit/status"),
+  googleFitAuthUrl:  ()             => API.get("/smartwatch/google-fit/auth-url"),
+  googleFitExchange: (code)         => API.post("/smartwatch/google-fit/exchange", { code }),
+  googleFitData:     (token, days)  => API.post("/smartwatch/google-fit/data", { token, days }),
 };
 
-// ── REPORTS ───────────────────────────────────────────────────────
+// ── APPLE HEALTH ──────────────────────────────────────────────────
+export const appleHealthAPI = {
+  getData: (userId, days = 30) => API.get(`/apple-health/data?user_id=${userId}&days=${days}`),
+};
+
 export const reportsAPI = {
   generate: (patientId) => API.get(`/reports/${patientId}`, { responseType: "blob" }),
 };
 
-// ── EMAIL ALERTS ──────────────────────────────────────────────────
 export const emailAPI = {
   sendAlert: (patientId, recipient, patientName) =>
     API.post("/email/send", { patient_id: patientId, recipient, patient_name: patientName }),
-  testEmail: (email) =>
-    API.post("/email/test", { email }),
+  testEmail: (email) => API.post("/email/test", { email }),
 };
 
 export default API;
