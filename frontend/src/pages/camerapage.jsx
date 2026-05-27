@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { vitalsAPI, patientsAPI } from "../services/api";
 
 const C = {
@@ -11,9 +11,9 @@ const css = (s) => s;
 // ── Vital display card ────────────────────────────────────────────
 function VitalCard({ icon, label, value, unit, status }) {
   const statusColor = {
-    normal:   C.accent2,
-    warning:  C.warn,
-    critical: C.danger,
+    normal:    C.accent2,
+    warning:   C.warn,
+    critical:  C.danger,
     measuring: C.accent,
   }[status] || C.muted;
 
@@ -59,7 +59,7 @@ export default function CameraPage() {
   const streamRef   = useRef(null);
   const intervalRef = useRef(null);
   const frameCount  = useRef(0);
-  const brightVals  = useRef([]);
+  const redVals     = useRef([]);   // RED channel signal from finger
 
   const [patients, setPatients]     = useState([]);
   const [patientId, setPatientId]   = useState("");
@@ -68,9 +68,10 @@ export default function CameraPage() {
   const [progress, setProgress]     = useState(0);
   const [saved, setSaved]           = useState(false);
   const [error, setError]           = useState("");
+  const [fingerDetected, setFingerDetected] = useState(false);
 
-  const [heartRate,   setHeartRate]   = useState(null);
-  const [hrStatus,    setHrStatus]    = useState("normal");
+  const [heartRate,    setHeartRate]   = useState(null);
+  const [hrStatus,     setHrStatus]    = useState("normal");
   const [manualVitals, setManualVitals] = useState({
     spo2: "", systolic_bp: "", diastolic_bp: "",
     temperature: "", blood_sugar: "",
@@ -82,14 +83,33 @@ export default function CameraPage() {
     return () => stopCamera();
   }, []);
 
-  // ── Camera ────────────────────────────────────────────────────
+  // ── Camera (rear-facing + torch for finger PPG) ───────────────
   async function startCamera() {
     setError("");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: 320, height: 240 }
-      });
+      // Prefer rear camera so user can cover lens with finger
+      // Also request torch (flashlight) for better signal on mobile
+      const constraints = {
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 320 },
+          height: { ideal: 240 },
+        },
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
+
+      // Try to enable torch (flashlight) on mobile devices
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack && typeof videoTrack.applyConstraints === "function") {
+        try {
+          await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+        } catch (_) {
+          // Torch not supported on this device — that's OK, ambient light still works
+        }
+      }
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -109,80 +129,151 @@ export default function CameraPage() {
     setCamActive(false);
     setMeasuring(false);
     setProgress(0);
+    setFingerDetected(false);
   }
 
-  // ── Heart Rate Measurement (rPPG — brightness fluctuation) ────
-  const MEASURE_DURATION = 30;  // seconds
-  const SAMPLE_RATE      = 15;  // frames/sec
+  // ── Check if finger is covering the lens ─────────────────────
+  // A finger covering the lens makes the whole frame very RED and dark.
+  // Average red channel will be high; blue/green will be much lower.
+  function isFingerOnLens(ctx, w, h) {
+    const data = ctx.getImageData(0, 0, w, h).data;
+    let r = 0, g = 0, b = 0, count = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      r += data[i];
+      g += data[i + 1];
+      b += data[i + 2];
+      count++;
+    }
+    r /= count; g /= count; b /= count;
+    // Finger PPG: frame is very red/dark, red dominates green and blue
+    return r > 60 && r > g * 1.4 && r > b * 1.4;
+  }
 
-  function getFrameBrightness() {
+  // ── Get average RED channel from FULL frame ───────────────────
+  // (finger covers entire lens — we use full-frame average, not a small ROI)
+  function getFrameRedAvg() {
     const video  = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return null;
+
+    const W = 80, H = 60;
+    canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext("2d");
-    canvas.width = 80; canvas.height = 60;
-    ctx.drawImage(video, 0, 0, 80, 60);
-    const data = ctx.getImageData(30, 20, 20, 20).data;
+    ctx.drawImage(video, 0, 0, W, H);
+
+    // Finger detection hint
+    const detected = isFingerOnLens(ctx, W, H);
+    setFingerDetected(detected);
+
+    // Full-frame average RED channel
+    const data = ctx.getImageData(0, 0, W, H).data;
     let r = 0;
     for (let i = 0; i < data.length; i += 4) r += data[i];
     return r / (data.length / 4);
   }
 
+  // ── Heart Rate Estimation from finger PPG signal ──────────────
+  const MEASURE_DURATION = 30;   // seconds
+  const SAMPLE_RATE      = 15;   // frames/sec
+
   function estimateHR(signal) {
-    if (signal.length < 20) return null;
+    if (signal.length < 30) return null;
 
-    // Detrend
-    const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
-    const detrended = signal.map(v => v - mean);
+    // 1. Detrend (remove DC offset + slow drift via linear regression)
+    const n = signal.length;
+    const xs = Array.from({ length: n }, (_, i) => i);
+    const meanX = (n - 1) / 2;
+    const meanY = signal.reduce((a, b) => a + b, 0) / n;
+    const num = xs.reduce((s, x, i) => s + (x - meanX) * (signal[i] - meanY), 0);
+    const den = xs.reduce((s, x) => s + (x - meanX) ** 2, 0);
+    const slope = num / den;
+    const detrended = signal.map((v, i) => v - (slope * i + (meanY - slope * meanX)));
 
-    // Count zero crossings (upward) → estimate frequency
-    let crossings = 0;
-    for (let i = 1; i < detrended.length; i++) {
-      if (detrended[i - 1] < 0 && detrended[i] >= 0) crossings++;
+    // 2. Moving average smooth (window = 3 frames)
+    const smoothed = detrended.map((v, i, arr) => {
+      const w = 3;
+      const start = Math.max(0, i - Math.floor(w / 2));
+      const end   = Math.min(arr.length, i + Math.ceil(w / 2));
+      const slice = arr.slice(start, end);
+      return slice.reduce((a, b) => a + b, 0) / slice.length;
+    });
+
+    // 3. Peak detection (local maxima above threshold)
+    const std = Math.sqrt(smoothed.reduce((s, v) => s + v ** 2, 0) / smoothed.length);
+    const threshold = std * 0.4;
+    const minGap    = Math.round(SAMPLE_RATE * 0.4); // min 0.4s between beats (~150 BPM max)
+
+    const peaks = [];
+    for (let i = 1; i < smoothed.length - 1; i++) {
+      if (
+        smoothed[i] > smoothed[i - 1] &&
+        smoothed[i] > smoothed[i + 1] &&
+        smoothed[i] > threshold
+      ) {
+        if (peaks.length === 0 || i - peaks[peaks.length - 1] >= minGap) {
+          peaks.push(i);
+        }
+      }
     }
 
-    const durationSec = signal.length / SAMPLE_RATE;
-    const beatsPerSec = crossings / durationSec;
-    const bpm = Math.round(beatsPerSec * 60);
+    if (peaks.length < 3) return null;
+
+    // 4. Compute average BPM from inter-peak intervals
+    const intervals = [];
+    for (let i = 1; i < peaks.length; i++) {
+      intervals.push((peaks[i] - peaks[i - 1]) / SAMPLE_RATE); // seconds
+    }
+    const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+    const bpm = Math.round(60 / avgInterval);
 
     // Physiologically plausible range
     if (bpm < 40 || bpm > 180) return null;
     return bpm;
   }
 
+  // ── Start measurement ─────────────────────────────────────────
   function startMeasurement() {
     if (!camActive) { setError("Start camera first"); return; }
     frameCount.current = 0;
-    brightVals.current = [];
+    redVals.current    = [];
     setMeasuring(true);
     setProgress(0);
     setHeartRate(null);
     setSaved(false);
+    setError("");
 
     intervalRef.current = setInterval(() => {
-      const brightness = getFrameBrightness();
-      if (brightness !== null) brightVals.current.push(brightness);
+      const red = getFrameRedAvg();
+      if (red !== null) redVals.current.push(red);
 
       frameCount.current += 1;
-      const pct = Math.min(100, Math.round((frameCount.current / (MEASURE_DURATION * SAMPLE_RATE)) * 100));
+      const pct = Math.min(100, Math.round(
+        (frameCount.current / (MEASURE_DURATION * SAMPLE_RATE)) * 100
+      ));
       setProgress(pct);
 
       if (frameCount.current >= MEASURE_DURATION * SAMPLE_RATE) {
         clearInterval(intervalRef.current);
         setMeasuring(false);
+        setFingerDetected(false);
 
-        const hr = estimateHR(brightVals.current);
+        const hr = estimateHR(redVals.current);
         if (hr) {
           setHeartRate(hr);
-          setHrStatus(hr > 100 || hr < 55 ? (hr > 120 || hr < 40 ? "critical" : "warning") : "normal");
+          setHrStatus(
+            hr > 120 || hr < 40 ? "critical" :
+            hr > 100 || hr < 55 ? "warning"  : "normal"
+          );
         } else {
-          setError("Could not estimate heart rate. Ensure your face is well-lit and stay still.");
+          setError(
+            "Could not estimate heart rate. Make sure your fingertip fully covers the camera lens and hold still."
+          );
         }
       }
     }, 1000 / SAMPLE_RATE);
   }
 
-  // ── Save all vitals to Supabase ───────────────────────────────
+  // ── Save all vitals ───────────────────────────────────────────
   async function saveVitals() {
     if (!patientId) { setError("Select a patient first"); return; }
     setError(""); setSaved(false);
@@ -218,12 +309,20 @@ export default function CameraPage() {
   return (
     <div style={css({ fontFamily: "'Segoe UI', sans-serif", color: C.text })}>
       <style>{`
-        @keyframes pulse { 0%,100%{box-shadow:0 0 0 4px rgba(255,77,109,0.3)} 50%{box-shadow:0 0 0 8px rgba(255,77,109,0.1)} }
+        @keyframes pulse {
+          0%,100% { box-shadow: 0 0 0 4px rgba(255,77,109,0.3); }
+          50%      { box-shadow: 0 0 0 8px rgba(255,77,109,0.1); }
+        }
+        @keyframes fingerPulse {
+          0%,100% { opacity: 1; }
+          50%      { opacity: 0.5; }
+        }
       `}</style>
 
       <h2 style={css({ margin: "0 0 6px", fontSize: 22 })}>📷 Camera Vitals</h2>
       <p style={css({ color: C.muted, fontSize: 14, marginBottom: 24 })}>
-        Measure heart rate using your camera via rPPG (remote photoplethysmography). No hardware needed.
+        Measure heart rate by placing your <strong style={{ color: C.accent }}>fingertip over the camera lens</strong>.
+        The flashlight will activate automatically on mobile devices.
       </p>
 
       <div style={css({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 })}>
@@ -246,7 +345,7 @@ export default function CameraPage() {
           {/* Camera feed */}
           <div style={css({
             background: "#000", borderRadius: 14, overflow: "hidden",
-            border: `1px solid ${camActive ? C.accent : C.border}`,
+            border: `1px solid ${camActive ? (fingerDetected ? C.accent2 : C.accent) : C.border}`,
             marginBottom: 16, position: "relative", aspectRatio: "4/3",
             display: "flex", alignItems: "center", justifyContent: "center",
           })}>
@@ -261,11 +360,25 @@ export default function CameraPage() {
               </div>
             )}
 
+            {/* Finger detection badge */}
+            {camActive && !measuring && (
+              <div style={css({
+                position: "absolute", top: 10, left: 10,
+                background: fingerDetected ? `${C.accent2}22` : "rgba(0,0,0,0.5)",
+                border: `1px solid ${fingerDetected ? C.accent2 : C.muted}`,
+                borderRadius: 8, padding: "4px 10px", fontSize: 12,
+                color: fingerDetected ? C.accent2 : C.muted,
+                animation: fingerDetected ? "fingerPulse 1.5s infinite" : "none",
+              })}>
+                {fingerDetected ? "✅ Finger detected" : "☝️ Place finger on lens"}
+              </div>
+            )}
+
             {/* Measuring overlay */}
             {measuring && (
               <div style={css({
                 position: "absolute", inset: 0,
-                background: "rgba(3,12,44,0.7)",
+                background: "rgba(3,12,44,0.8)",
                 display: "flex", flexDirection: "column",
                 alignItems: "center", justifyContent: "center",
               })}>
@@ -283,7 +396,9 @@ export default function CameraPage() {
                   })} />
                 </div>
                 <div style={css({ color: C.muted, fontSize: 12, marginTop: 8 })}>
-                  Stay still. Keep face centered.
+                  {fingerDetected
+                    ? "✅ Finger detected — hold still!"
+                    : "☝️ Cover the camera lens with your fingertip"}
                 </div>
               </div>
             )}
@@ -318,13 +433,17 @@ export default function CameraPage() {
             <div style={css({ fontSize: 12, fontWeight: 700, color: C.accent, marginBottom: 8 })}>HOW IT WORKS</div>
             {[
               "1. Select a patient",
-              "2. Click Start Camera",
-              "3. Click Measure HR — stay still for 30 seconds",
-              "4. Enter any other vitals manually below",
-              "5. Click Save Vitals",
+              "2. Click Start Camera (uses rear camera)",
+              "3. Place your fingertip gently over the camera lens",
+              "4. Click Measure HR — hold still for 30 seconds",
+              "5. Enter any other vitals manually below",
+              "6. Click Save Vitals",
             ].map((t, i) => (
               <div key={i} style={css({ fontSize: 13, color: C.muted, marginBottom: 4 })}>{t}</div>
             ))}
+            <div style={css({ fontSize: 12, color: C.warn, marginTop: 10 })}>
+              💡 On mobile, the flashlight activates automatically for a better signal.
+            </div>
           </div>
         </div>
 
@@ -333,7 +452,7 @@ export default function CameraPage() {
           {/* Vital cards */}
           <div style={css({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 })}>
             <VitalCard icon="❤️" label="HEART RATE" value={heartRate} unit="bpm" status={measuring ? "measuring" : hrStatus} />
-            <VitalCard icon="🫁" label="SPO2"       value={manualVitals.spo2 || null} unit="%" status="normal" />
+            <VitalCard icon="🫁" label="SPO2"        value={manualVitals.spo2 || null} unit="%" status="normal" />
             <VitalCard icon="🩸" label="BLOOD PRESSURE"
               value={manualVitals.systolic_bp ? `${manualVitals.systolic_bp}/${manualVitals.diastolic_bp || "?"}` : null}
               unit="mmHg" status="normal" />
@@ -386,7 +505,7 @@ export default function CameraPage() {
 
           {/* Note */}
           <div style={css({ marginTop: 12, fontSize: 12, color: C.muted, textAlign: "center", lineHeight: 1.6 })}>
-            Camera HR uses rPPG (skin colour fluctuation detection).<br />
+            Camera HR uses finger PPG (red channel blood flow detection).<br />
             For clinical use, verify with a medical-grade device.
           </div>
         </div>
