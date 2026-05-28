@@ -7,66 +7,42 @@ const C = {
   warn: "#ffd166", text: "#e8f4f8", muted: "rgba(232,244,248,0.5)",
 };
 
-// ── Vital display card ────────────────────────────────────────────
 function VitalCard({ icon, label, value, unit, status }) {
   const statusColor = {
     normal: C.accent2, warning: C.warn, critical: C.danger, measuring: C.accent,
   }[status] || C.muted;
   return (
-    <div style={{
-      background: C.card, border: `1px solid ${statusColor}44`,
-      borderRadius: 14, padding: 20, textAlign: "center",
-    }}>
+    <div style={{ background: C.card, border: `1px solid ${statusColor}44`, borderRadius: 14, padding: 20, textAlign: "center" }}>
       <div style={{ fontSize: 28, marginBottom: 8 }}>{icon}</div>
       <div style={{ fontSize: 11, color: C.muted, letterSpacing: 2, marginBottom: 6 }}>{label}</div>
       {value !== null ? (
-        <>
-          <div style={{ fontSize: 36, fontWeight: 800, color: statusColor }}>{value}</div>
-          <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>{unit}</div>
-        </>
-      ) : (
-        <div style={{ fontSize: 14, color: C.muted, fontStyle: "italic" }}>—</div>
-      )}
+        <><div style={{ fontSize: 36, fontWeight: 800, color: statusColor }}>{value}</div>
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>{unit}</div></>
+      ) : <div style={{ fontSize: 14, color: C.muted, fontStyle: "italic" }}>—</div>}
     </div>
   );
 }
 
-// ── Live Pulse Waveform Canvas ────────────────────────────────────
 function PulseWaveform({ signal, isActive, quality }) {
   const canvasRef = useRef(null);
-
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
-    const W = canvas.width;
-    const H = canvas.height;
+    const W = canvas.width, H = canvas.height;
     ctx.clearRect(0, 0, W, H);
-
-    // Background grid
-    ctx.strokeStyle = "rgba(59,201,232,0.06)";
-    ctx.lineWidth = 1;
-    for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-    for (let y = 0; y < H; y += 20) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-
+    ctx.strokeStyle = "rgba(59,201,232,0.06)"; ctx.lineWidth = 1;
+    for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+    for (let y = 0; y < H; y += 20) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
     if (!signal || signal.length < 2) {
-      ctx.strokeStyle = "rgba(59,201,232,0.3)";
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
-      return;
+      ctx.strokeStyle = "rgba(59,201,232,0.3)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, H/2); ctx.lineTo(W, H/2); ctx.stroke(); return;
     }
-
     const display = signal.slice(-W);
-    const min = Math.min(...display);
-    const max = Math.max(...display);
-    const range = max - min || 1;
+    const min = Math.min(...display), max = Math.max(...display), range = max - min || 1;
     const color = quality > 70 ? C.accent2 : quality > 40 ? C.warn : C.danger;
-
-    ctx.shadowBlur = 8;
-    ctx.shadowColor = color;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2.5;
-    ctx.lineJoin = "round";
+    ctx.shadowBlur = 8; ctx.shadowColor = color;
+    ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineJoin = "round";
     ctx.beginPath();
     display.forEach((val, i) => {
       const x = (i / (display.length - 1)) * W;
@@ -74,27 +50,17 @@ function PulseWaveform({ signal, isActive, quality }) {
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     });
     ctx.stroke();
-
     if (isActive && display.length > 1) {
       const lastVal = display[display.length - 1];
       const dotY = H - ((lastVal - min) / range) * (H * 0.8) - H * 0.1;
-      ctx.beginPath();
-      ctx.arc(W - 4, dotY, 5, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
+      ctx.beginPath(); ctx.arc(W - 4, dotY, 5, 0, Math.PI * 2);
+      ctx.fillStyle = color; ctx.fill();
     }
     ctx.shadowBlur = 0;
   }, [signal, isActive, quality]);
-
-  return (
-    <canvas ref={canvasRef} width={560} height={100} style={{
-      width: "100%", height: 100, borderRadius: 8,
-      background: "rgba(0,0,0,0.3)", border: `1px solid ${C.border}`,
-    }} />
-  );
+  return <canvas ref={canvasRef} width={560} height={100} style={{ width: "100%", height: 100, borderRadius: 8, background: "rgba(0,0,0,0.3)", border: `1px solid ${C.border}` }} />;
 }
 
-// ── Signal Quality Bar ────────────────────────────────────────────
 function QualityBar({ quality }) {
   const color = quality > 70 ? C.accent2 : quality > 40 ? C.warn : C.danger;
   const label = quality > 70 ? "Good Signal" : quality > 40 ? "Weak Signal" : "No Signal";
@@ -105,19 +71,12 @@ function QualityBar({ quality }) {
         <span style={{ fontSize: 11, color, fontWeight: 700 }}>{label} ({Math.round(quality)}%)</span>
       </div>
       <div style={{ height: 6, background: "rgba(255,255,255,0.08)", borderRadius: 3, overflow: "hidden" }}>
-        <div style={{
-          width: `${quality}%`, height: "100%",
-          background: `linear-gradient(90deg, ${C.danger}, ${color})`,
-          borderRadius: 3, transition: "width 0.3s",
-        }} />
+        <div style={{ width: `${quality}%`, height: "100%", background: `linear-gradient(90deg, ${C.danger}, ${color})`, borderRadius: 3, transition: "width 0.3s" }} />
       </div>
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  MAIN PAGE
-// ═══════════════════════════════════════════════════════════════════
 export default function CameraPage() {
   const videoRef    = useRef(null);
   const canvasRef   = useRef(null);
@@ -125,23 +84,25 @@ export default function CameraPage() {
   const intervalRef = useRef(null);
   const frameCount  = useRef(0);
   const rawSignal   = useRef([]);
-  const MEASURE_DURATION = 30;
-  const SAMPLE_RATE      = 30;
 
-  const [patients, setPatients]         = useState([]);
-  const [patientId, setPatientId]       = useState("");
-  const [camActive, setCamActive]       = useState(false);
-  const [measuring, setMeasuring]       = useState(false);
-  const [progress, setProgress]         = useState(0);
-  const [saved, setSaved]               = useState(false);
-  const [error, setError]               = useState("");
+  // ── KEY FIX: 15fps instead of 30 — iPhone can sustain this reliably ──
+  const MEASURE_DURATION = 30;
+  const SAMPLE_RATE      = 15;
+
+  const [patients, setPatients]           = useState([]);
+  const [patientId, setPatientId]         = useState("");
+  const [camActive, setCamActive]         = useState(false);
+  const [measuring, setMeasuring]         = useState(false);
+  const [progress, setProgress]           = useState(0);
+  const [saved, setSaved]                 = useState(false);
+  const [error, setError]                 = useState("");
   const [fingerDetected, setFingerDetected] = useState(false);
   const [signalQuality, setSignalQuality]   = useState(0);
   const [displaySignal, setDisplaySignal]   = useState([]);
-  const [liveHR, setLiveHR]             = useState(null);
-  const [heartRate, setHeartRate]       = useState(null);
-  const [hrStatus, setHrStatus]         = useState("normal");
-  const [manualVitals, setManualVitals] = useState({
+  const [liveHR, setLiveHR]               = useState(null);
+  const [heartRate, setHeartRate]         = useState(null);
+  const [hrStatus, setHrStatus]           = useState("normal");
+  const [manualVitals, setManualVitals]   = useState({
     spo2: "", systolic_bp: "", diastolic_bp: "", temperature: "", blood_sugar: "",
   });
 
@@ -163,9 +124,7 @@ export default function CameraPage() {
       } catch (_) {}
       if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
       setCamActive(true);
-    } catch {
-      setError("Camera access denied. Please allow camera permission.");
-    }
+    } catch { setError("Camera access denied. Please allow camera permission."); }
   }
 
   function stopCamera() {
@@ -189,57 +148,103 @@ export default function CameraPage() {
     return { r: r/count, g: g/count, b: b/count };
   }
 
-  function checkFinger({ r, g, b }) { return r > 80 && r > g * 1.5 && r > b * 1.5; }
+  function checkFinger({ r, g, b }) {
+    // Finger covers lens: frame goes very red/dark
+    return r > 60 && r > g * 1.4 && r > b * 1.4;
+  }
 
+  // ── FIXED: Better SNR calculation tuned for finger PPG ──────────
   function computeQuality(signal) {
     if (signal.length < 10) return 0;
-    const recent = signal.slice(-SAMPLE_RATE * 3);
+    const recent = signal.slice(-SAMPLE_RATE * 4);
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const std = Math.sqrt(recent.reduce((s, v) => s + (v - mean) ** 2, 0) / recent.length);
-    const snr = (std / (mean || 1)) * 100;
-    if (snr < 0.05) return 10;
-    if (snr > 5) return 20;
-    return Math.min(100, Math.max(0, snr * 400));
+    const cv = (std / (mean || 1)) * 100;
+    if (cv < 0.08) return 8;   // flat — no finger
+    if (cv > 8)    return 15;  // too noisy — moving
+    return Math.min(100, cv * 35);
   }
 
+  // ── FIXED: Proper detrending + moving avg + high-pass ──────────
   function bandpassFilter(signal) {
-    if (signal.length < 6) return signal;
-    const filtered = [...signal];
-    const hpAlpha = 0.95;
-    for (let i = 1; i < filtered.length; i++)
-      filtered[i] = hpAlpha * (filtered[i-1] + signal[i] - signal[i-1]);
-    const lpAlpha = 0.3;
-    for (let i = 1; i < filtered.length; i++)
-      filtered[i] = filtered[i-1] + lpAlpha * (filtered[i] - filtered[i-1]);
-    return filtered;
+    if (signal.length < 8) return signal;
+    const n = signal.length;
+
+    // 1. Linear detrending (removes slow drift from AGC on iPhone)
+    const meanX = (n - 1) / 2;
+    const meanY = signal.reduce((a, b) => a + b, 0) / n;
+    const num = signal.reduce((s, v, i) => s + (i - meanX) * (v - meanY), 0);
+    const den = signal.reduce((s, _, i) => s + (i - meanX) ** 2, 0);
+    const slope = num / den;
+    const intercept = meanY - slope * meanX;
+    const detrended = signal.map((v, i) => v - (slope * i + intercept));
+
+    // 2. Moving average smooth (window=3 at 15fps cuts above ~2.5Hz)
+    const win = 3;
+    const smoothed = detrended.map((_, i, arr) => {
+      const s = Math.max(0, i - Math.floor(win/2));
+      const e = Math.min(arr.length, i + Math.ceil(win/2));
+      return arr.slice(s, e).reduce((a, b) => a + b, 0) / (e - s);
+    });
+
+    // 3. High-pass (alpha=0.85 at 15fps cuts below ~0.4Hz)
+    const hp = [0];
+    for (let i = 1; i < smoothed.length; i++)
+      hp[i] = 0.85 * (hp[i-1] + smoothed[i] - smoothed[i-1]);
+
+    return hp;
   }
 
+  // ── FIXED: Peak detection + autocorrelation fallback ────────────
   function estimateHR(signal) {
-    if (signal.length < SAMPLE_RATE * 5) return null;
+    if (signal.length < SAMPLE_RATE * 6) return null;
+
     const filtered = bandpassFilter(signal);
     const mean = filtered.reduce((a, b) => a + b, 0) / filtered.length;
     const detrended = filtered.map(v => v - mean);
-    const std = Math.sqrt(detrended.reduce((s, v) => s + v*v, 0) / detrended.length);
-    const normalized = detrended.map(v => v / (std || 1));
-    const minGap = Math.round(SAMPLE_RATE * 0.4);
+    const std = Math.sqrt(detrended.reduce((s, v) => s + v*v, 0) / detrended.length) || 1;
+    const normalized = detrended.map(v => v / std);
+
+    // Method 1: Peak detection (lower threshold = 0.15 not 0.3)
+    const minGap = Math.round(SAMPLE_RATE * 0.33); // 330ms min between beats
     const peaks = [];
     for (let i = 2; i < normalized.length - 2; i++) {
-      if (normalized[i] > 0.3 &&
-          normalized[i] > normalized[i-1] && normalized[i] > normalized[i-2] &&
-          normalized[i] > normalized[i+1] && normalized[i] > normalized[i+2]) {
+      if (normalized[i] > 0.15 &&
+          normalized[i] >= normalized[i-1] && normalized[i] >= normalized[i-2] &&
+          normalized[i] >= normalized[i+1] && normalized[i] >= normalized[i+2]) {
         if (peaks.length === 0 || i - peaks[peaks.length-1] >= minGap) peaks.push(i);
       }
     }
-    if (peaks.length < 4) return null;
-    const ibis = [];
-    for (let i = 1; i < peaks.length; i++) ibis.push((peaks[i] - peaks[i-1]) / SAMPLE_RATE);
-    const ibiMean = ibis.reduce((a, b) => a + b, 0) / ibis.length;
-    const ibiStd = Math.sqrt(ibis.reduce((s, v) => s + (v - ibiMean)**2, 0) / ibis.length);
-    const valid = ibis.filter(v => Math.abs(v - ibiMean) < 2 * ibiStd);
-    if (valid.length < 3) return null;
-    const avgIBI = valid.reduce((a, b) => a + b, 0) / valid.length;
-    const bpm = Math.round(60 / avgIBI);
-    return bpm >= 40 && bpm <= 180 ? bpm : null;
+
+    if (peaks.length >= 4) {
+      const ibis = [];
+      for (let i = 1; i < peaks.length; i++) ibis.push((peaks[i] - peaks[i-1]) / SAMPLE_RATE);
+      const ibiMean = ibis.reduce((a, b) => a + b, 0) / ibis.length;
+      const ibiStd  = Math.sqrt(ibis.reduce((s, v) => s + (v - ibiMean)**2, 0) / ibis.length);
+      const valid   = ibis.filter(v => Math.abs(v - ibiMean) < 2*ibiStd && v > 0.3 && v < 1.5);
+      if (valid.length >= 3) {
+        const bpm = Math.round(60 / (valid.reduce((a,b) => a+b, 0) / valid.length));
+        if (bpm >= 40 && bpm <= 180) return bpm;
+      }
+    }
+
+    // Method 2: Autocorrelation fallback (works even when peaks are unclear)
+    const N = normalized.length;
+    const maxLag = Math.round(SAMPLE_RATE * 1.5); // 1.5s = 40 BPM min
+    const minLag = Math.round(SAMPLE_RATE * 0.33); // 0.33s = 180 BPM max
+    let bestLag = -1, bestCorr = -Infinity;
+    for (let lag = minLag; lag <= maxLag; lag++) {
+      let corr = 0;
+      for (let i = 0; i < N - lag; i++) corr += normalized[i] * normalized[i + lag];
+      corr /= (N - lag);
+      if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
+    }
+    if (bestLag > 0 && bestCorr > 0.02) {
+      const bpm = Math.round(60 / (bestLag / SAMPLE_RATE));
+      if (bpm >= 40 && bpm <= 180) return bpm;
+    }
+
+    return null;
   }
 
   function startMeasurement() {
@@ -272,7 +277,7 @@ export default function CameraPage() {
           setHeartRate(hr);
           setHrStatus(hr > 120 || hr < 40 ? "critical" : hr > 100 || hr < 55 ? "warning" : "normal");
         } else {
-          setError("Could not estimate heart rate. Make sure your fingertip fully covers the lens and hold still.");
+          setError("Could not estimate heart rate. Place fingertip firmly over lens and hold perfectly still.");
         }
       }
     }, 1000 / SAMPLE_RATE);
@@ -316,8 +321,6 @@ export default function CameraPage() {
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-
-        {/* LEFT */}
         <div>
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 11, color: C.muted, marginBottom: 5, letterSpacing: 1 }}>SELECT PATIENT</div>
@@ -327,7 +330,6 @@ export default function CameraPage() {
             </select>
           </div>
 
-          {/* Camera feed */}
           <div style={{
             background: "#000", borderRadius: 14, overflow: "hidden",
             border: `2px solid ${camActive ? (fingerDetected ? C.accent2 : C.accent) : C.border}`,
@@ -337,14 +339,12 @@ export default function CameraPage() {
             <video ref={videoRef} muted playsInline
               style={{ width: "100%", height: "100%", objectFit: "cover", display: camActive ? "block" : "none" }} />
             <canvas ref={canvasRef} style={{ display: "none" }} />
-
             {!camActive && (
               <div style={{ textAlign: "center", color: C.muted }}>
                 <div style={{ fontSize: 52, marginBottom: 8 }}>📷</div>
                 <div style={{ fontSize: 14 }}>Camera off</div>
               </div>
             )}
-
             {camActive && (
               <div style={{
                 position: "absolute", top: 10, left: 10,
@@ -355,104 +355,74 @@ export default function CameraPage() {
                 {fingerDetected ? "✅ Finger detected" : "☝️ Place finger on lens"}
               </div>
             )}
-
             {measuring && liveHR && (
               <div style={{
                 position: "absolute", top: 10, right: 10,
                 background: "rgba(255,77,109,0.15)", border: `1px solid ${C.danger}`,
                 borderRadius: 8, padding: "5px 12px", color: C.danger,
                 fontSize: 13, fontWeight: 800, animation: "pulse 1s infinite",
-              }}>
-                ❤️ {liveHR} BPM
-              </div>
+              }}>❤️ {liveHR} BPM</div>
             )}
-
             {measuring && (
-              <div style={{
-                position: "absolute", bottom: 0, left: 0, right: 0,
-                background: "rgba(3,12,44,0.8)", padding: "10px 14px",
-              }}>
+              <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(3,12,44,0.8)", padding: "10px 14px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                  <span style={{ fontSize: 12, color: C.text }}>
-                    {fingerDetected ? "Hold perfectly still..." : "☝️ Cover lens with fingertip"}
-                  </span>
+                  <span style={{ fontSize: 12, color: C.text }}>{fingerDetected ? "Hold perfectly still..." : "☝️ Cover lens with fingertip"}</span>
                   <span style={{ fontSize: 12, color: C.accent, fontWeight: 700 }}>{progress}%</span>
                 </div>
                 <div style={{ height: 4, background: "rgba(255,255,255,0.1)", borderRadius: 2, overflow: "hidden" }}>
-                  <div style={{
-                    width: `${progress}%`, height: "100%",
-                    background: `linear-gradient(90deg, ${C.danger}, ${C.warn})`,
-                    borderRadius: 2, transition: "width 0.1s",
-                  }} />
+                  <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${C.danger}, ${C.warn})`, borderRadius: 2, transition: "width 0.1s" }} />
                 </div>
               </div>
             )}
           </div>
 
-          {/* Waveform */}
           {camActive && (
-            <div style={{
-              background: "rgba(0,0,0,0.3)", borderRadius: 12, padding: 12,
-              border: `1px solid ${C.border}`, marginBottom: 12,
-            }}>
+            <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 12, padding: 12, border: `1px solid ${C.border}`, marginBottom: 12 }}>
               {measuring && <QualityBar quality={signalQuality} />}
               <div style={{ fontSize: 11, color: C.muted, marginBottom: 6, letterSpacing: 1 }}>
-                LIVE PULSE WAVEFORM
-                {!measuring && <span style={{ color: C.muted, fontWeight: 400 }}> — start measuring to see signal</span>}
+                LIVE PULSE WAVEFORM{!measuring && <span style={{ fontWeight: 400 }}> — start measuring to see signal</span>}
               </div>
               <PulseWaveform signal={displaySignal} isActive={measuring} quality={signalQuality} />
             </div>
           )}
 
-          {/* Buttons */}
           <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
             {!camActive ? (
-              <button onClick={startCamera} style={{
-                flex: 1, padding: "11px", borderRadius: 10, border: "none",
-                background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer", fontSize: 14,
-              }}>📷 Start Camera</button>
+              <button onClick={startCamera} style={{ flex: 1, padding: "11px", borderRadius: 10, border: "none", background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>📷 Start Camera</button>
             ) : (
-              <button onClick={stopCamera} style={{
-                flex: 1, padding: "11px", borderRadius: 10,
-                border: `1px solid ${C.danger}`, background: "transparent",
-                color: C.danger, fontWeight: 700, cursor: "pointer", fontSize: 14,
-              }}>⏹ Stop Camera</button>
+              <button onClick={stopCamera} style={{ flex: 1, padding: "11px", borderRadius: 10, border: `1px solid ${C.danger}`, background: "transparent", color: C.danger, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>⏹ Stop Camera</button>
             )}
             <button onClick={startMeasurement} disabled={!camActive || measuring} style={{
               flex: 1, padding: "11px", borderRadius: 10, border: "none",
               background: !camActive || measuring ? "rgba(255,77,109,0.3)" : C.danger,
               color: "#fff", fontWeight: 700, fontSize: 14,
               cursor: !camActive || measuring ? "not-allowed" : "pointer",
-            }}>
-              {measuring ? `⏳ ${progress}% — Hold still` : "❤️ Measure HR"}
-            </button>
+            }}>{measuring ? `⏳ ${progress}% — Hold still` : "❤️ Measure HR"}</button>
           </div>
 
-          {/* Instructions */}
           <div style={{ background: "rgba(59,201,232,0.04)", borderRadius: 10, padding: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.accent, marginBottom: 8 }}>HOW IT WORKS</div>
             {[
               ["1", "Select a patient above"],
               ["2", "Click Start Camera (uses rear camera)"],
-              ["3", "Place fingertip gently over the camera lens"],
-              ["4", "Wait for ✅ Finger detected badge, then click Measure HR"],
-              ["5", "Hold perfectly still for 30 seconds"],
-              ["6", "Watch your live pulse waveform — shows your heartbeat!"],
+              ["3", "Place fingertip firmly over the camera lens"],
+              ["4", "Wait for ✅ Finger detected, then click Measure HR"],
+              ["5", "Hold perfectly still for 30 seconds — even slight movement resets the signal"],
+              ["6", "Watch the live pulse waveform — green = good signal!"],
               ["7", "Enter other vitals manually and Save"],
             ].map(([n, t]) => (
               <div key={n} style={{ fontSize: 12, color: C.muted, marginBottom: 5, display: "flex", gap: 8 }}>
-                <span style={{ color: C.accent, fontWeight: 700, minWidth: 16 }}>{n}.</span>
-                <span>{t}</span>
+                <span style={{ color: C.accent, fontWeight: 700, minWidth: 16 }}>{n}.</span><span>{t}</span>
               </div>
             ))}
             <div style={{ fontSize: 11, color: C.warn, marginTop: 10, lineHeight: 1.6 }}>
               💡 Flashlight turns on automatically on mobile for best results.<br />
-              💡 Apply gentle pressure — not too hard, not too soft.
+              💡 Apply gentle-firm pressure — cover the lens completely.<br />
+              💡 Rest your elbow on a surface to avoid hand tremors.
             </div>
           </div>
         </div>
 
-        {/* RIGHT */}
         <div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
             <VitalCard icon="❤️" label="HEART RATE" value={heartRate} unit="bpm" status={measuring ? "measuring" : hrStatus} />
@@ -464,9 +434,7 @@ export default function CameraPage() {
           </div>
 
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20, marginBottom: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.accent, marginBottom: 14, letterSpacing: 1 }}>
-              ENTER OTHER VITALS MANUALLY
-            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.accent, marginBottom: 14, letterSpacing: 1 }}>ENTER OTHER VITALS MANUALLY</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               {[["spo2","SpO2 (%)"],["systolic_bp","Systolic BP"],["diastolic_bp","Diastolic BP"],
                 ["temperature","Temperature (°C)"],["blood_sugar","Blood Sugar (mg/dL)"]].map(([k, label]) => (
@@ -478,18 +446,8 @@ export default function CameraPage() {
             </div>
           </div>
 
-          {error && (
-            <div style={{
-              background: "rgba(255,77,109,0.1)", border: `1px solid ${C.danger}44`,
-              borderRadius: 10, padding: 12, marginBottom: 12, color: C.danger, fontSize: 13,
-            }}>⚠️ {error}</div>
-          )}
-          {saved && (
-            <div style={{
-              background: "rgba(0,245,160,0.1)", border: `1px solid ${C.accent2}44`,
-              borderRadius: 10, padding: 12, marginBottom: 12, color: C.accent2, fontSize: 13,
-            }}>✅ Vitals saved successfully!</div>
-          )}
+          {error && <div style={{ background: "rgba(255,77,109,0.1)", border: `1px solid ${C.danger}44`, borderRadius: 10, padding: 12, marginBottom: 12, color: C.danger, fontSize: 13 }}>⚠️ {error}</div>}
+          {saved && <div style={{ background: "rgba(0,245,160,0.1)", border: `1px solid ${C.accent2}44`, borderRadius: 10, padding: 12, marginBottom: 12, color: C.accent2, fontSize: 13 }}>✅ Vitals saved successfully!</div>}
 
           <button onClick={saveVitals} disabled={!patientId} style={{
             width: "100%", padding: "13px", borderRadius: 10, border: "none",
@@ -499,8 +457,8 @@ export default function CameraPage() {
           }}>💾 Save All Vitals</button>
 
           <div style={{ marginTop: 12, fontSize: 11, color: C.muted, textAlign: "center", lineHeight: 1.7 }}>
-            Uses finger PPG — red channel blood flow detection via camera + flashlight.<br />
-            For clinical use, always verify with a medical-grade device.
+            Uses finger PPG — red channel blood flow via camera + flashlight.<br />
+            For clinical use, verify with a medical-grade device.
           </div>
         </div>
       </div>
