@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 from database import supabase
-from auth import get_current_user, require_org   # <-- shared dependencies
+from .auth import get_current_user, require_org   # <-- shared dependencies
 
 router = APIRouter()
 
