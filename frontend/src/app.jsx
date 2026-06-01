@@ -272,6 +272,12 @@ function LoginPage({ onLogin }) {
 // ═══════════════════════════════════════════════════════════════════
 //  DASHBOARD
 // ═══════════════════════════════════════════════════════════════════
+
+function filterPatients(all, user) {
+  if (user.kind === "solo")  return all.filter(p => p.email === user.email);
+  if (user.kind === "staff") return all.filter(p => p.org_id === user.org_id);
+  return all;
+}
 function Dashboard({ user, onLogout }) {
   const isMobile = useIsMobile();
   const [page, setPage]           = useState("overview");
@@ -292,7 +298,7 @@ function Dashboard({ user, onLogout }) {
         alertsAPI.getAll(false),
         alertsAPI.stats(),
       ]);
-      setPatients(pRes.data);
+      setPatients(filterPatients(pRes.data, user));
       setAlerts(aRes.data);
       setStats(sRes.data);
     } catch (e) { console.error(e); }
@@ -300,6 +306,11 @@ function Dashboard({ user, onLogout }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+  if (user.kind === "solo" && patients.length === 1 && page === "overview") {
+    openPatient(patients[0]);
+  }
+}, [patients]); 
 
   async function openPatient(p) {
     setSelPatient(p);
@@ -327,8 +338,10 @@ function Dashboard({ user, onLogout }) {
   );
 
   const navItems = [
-    { id: "overview", label: "Overview",        icon: "📊" },
-    { id: "patients", label: "Patients",        icon: "👥" },
+  { id: "overview", label: "Overview",        icon: "📊" },
+  ...(user.kind !== "solo"
+    ? [{ id: "patients", label: "Patients", icon: "👥" }]
+    : []),
     { id: "alerts",   label: "Alerts",          icon: "🚨" },
     { id: "vitals",   label: "Add Vitals",      icon: "💓" },
     { id: "ai",       label: "AI Insights",     icon: "🤖" },
@@ -515,7 +528,7 @@ function Dashboard({ user, onLogout }) {
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
                   <h2 style={{ margin: 0, fontSize: isMobile ? 20 : 24 }}>Patients</h2>
-                  <AddPatientForm onAdded={load} />
+                  {user.kind === "org" && <AddPatientForm onAdded={load} />}
                 </div>
                 <input
                   placeholder="🔍  Search..."
