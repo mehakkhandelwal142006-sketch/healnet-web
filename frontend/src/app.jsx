@@ -55,6 +55,18 @@ function Badge({ label, color }) {
   );
 }
 
+// ── ROLE-BASED PATIENT FILTER ─────────────────────────────────────
+function filterPatients(all, user) {
+  if (user.kind === "solo") {
+    const userEmail = (user.email || "").trim().toLowerCase();
+    const filtered = all.filter(p => (p.email || "").trim().toLowerCase() === userEmail);
+    console.log("[HealNet] solo filter | user.email:", userEmail, "| all patients:", all.length, "| matched:", filtered.length, filtered.map(p => p.email));
+    return filtered;
+  }
+  if (user.kind === "staff") return all.filter(p => p.org_id === user.org_id);
+  return all; // "org" sees everything
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  LOGIN PAGE
 // ═══════════════════════════════════════════════════════════════════
@@ -272,12 +284,6 @@ function LoginPage({ onLogin }) {
 // ═══════════════════════════════════════════════════════════════════
 //  DASHBOARD
 // ═══════════════════════════════════════════════════════════════════
-
-function filterPatients(all, user) {
-  if (user.kind === "solo")  return all.filter(p => p.email === user.email);
-  if (user.kind === "staff") return all.filter(p => p.org_id === user.org_id);
-  return all;
-}
 function Dashboard({ user, onLogout }) {
   const isMobile = useIsMobile();
   const [page, setPage]           = useState("overview");
@@ -298,6 +304,8 @@ function Dashboard({ user, onLogout }) {
         alertsAPI.getAll(false),
         alertsAPI.stats(),
       ]);
+      // ── ROLE-BASED FILTER: solo sees only their own record,
+      //    staff sees only their org's patients, org sees all
       setPatients(filterPatients(pRes.data, user));
       setAlerts(aRes.data);
       setStats(sRes.data);
@@ -306,11 +314,13 @@ function Dashboard({ user, onLogout }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // ── AUTO-OPEN solo user's own patient record ──────────────────
   useEffect(() => {
-  if (user.kind === "solo" && patients.length === 1 && page === "overview") {
-    openPatient(patients[0]);
-  }
-}, [patients]); 
+    if (user.kind === "solo" && patients.length === 1 && page === "overview") {
+      openPatient(patients[0]);
+    }
+  }, [patients]); // eslint-disable-line
 
   async function openPatient(p) {
     setSelPatient(p);
@@ -337,17 +347,18 @@ function Dashboard({ user, onLogout }) {
     p.patient_id.toLowerCase().includes(search.toLowerCase())
   );
 
+  // ── NAV ITEMS: hide "Patients" list tab for solo users ────────
   const navItems = [
-  { id: "overview", label: "Overview",        icon: "📊" },
-  ...(user.kind !== "solo"
-    ? [{ id: "patients", label: "Patients", icon: "👥" }]
-    : []),
-    { id: "alerts",   label: "Alerts",          icon: "🚨" },
-    { id: "vitals",   label: "Add Vitals",      icon: "💓" },
-    { id: "ai",       label: "AI Insights",     icon: "🤖" },
-    { id: "pupil",    label: "Pupil Detection", icon: "👁"  },
+    { id: "overview", label: "Overview",        icon: "📊" },
+    ...(user.kind !== "solo"
+      ? [{ id: "patients", label: "Patients", icon: "👥" }]
+      : []),
+    { id: "alerts",     label: "Alerts",          icon: "🚨" },
+    { id: "vitals",     label: "Add Vitals",      icon: "💓" },
+    { id: "ai",         label: "AI Insights",     icon: "🤖" },
+    { id: "pupil",      label: "Pupil Detection", icon: "👁"  },
     { id: "camera",     label: "Camera Vitals",   icon: "📷" },
-    { id: "smartwatch", label: "Smartwatch",       icon: "⌚" },
+    { id: "smartwatch", label: "Smartwatch",      icon: "⌚" },
   ];
 
   const inputStyle = {
@@ -528,6 +539,7 @@ function Dashboard({ user, onLogout }) {
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
                   <h2 style={{ margin: 0, fontSize: isMobile ? 20 : 24 }}>Patients</h2>
+                  {/* ── Only org admins can add new patients ───── */}
                   {user.kind === "org" && <AddPatientForm onAdded={load} />}
                 </div>
                 <input
@@ -576,7 +588,7 @@ function Dashboard({ user, onLogout }) {
             {/* ── PATIENT DETAIL ────────────────────────────────── */}
             {page === "patient" && selPatient && (
               <div>
-                <button onClick={() => setPage("patients")}
+                <button onClick={() => setPage(user.kind === "solo" ? "overview" : "patients")}
                   style={{ background: "none", border: "none", color: C.accent, cursor: "pointer", fontSize: 14, marginBottom: 16 }}>
                   ← Back
                 </button>
