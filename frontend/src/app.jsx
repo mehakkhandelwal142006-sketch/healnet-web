@@ -1,3 +1,10 @@
+// ─────────────────────────────────────────────────────────────────────────────
+//  HEALNET  —  App.jsx
+//  Fingerprint login added via expo-local-authentication + expo-secure-store
+//
+//  INSTALL BEFORE RUNNING:
+//    expo install expo-local-authentication expo-secure-store
+// ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback } from "react";
 import { authAPI, patientsAPI, vitalsAPI, alertsAPI } from "./services/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -6,7 +13,72 @@ import PupilPage      from "./pages/pupilpage";
 import CameraPage     from "./pages/camerapage";
 import SmartWatchPage from "./pages/smartwatch";
 
-// ── THEME ─────────────────────────────────────────────────────────
+// ── Expo packages (safe-import so web builds don't crash) ─────────────────────
+let LocalAuthentication = null;
+let SecureStore         = null;
+try {
+  LocalAuthentication = require("expo-local-authentication");
+  SecureStore         = require("expo-secure-store");
+} catch (_) {
+  // Running in a plain web browser — fingerprint unavailable, graceful fallback
+}
+
+// ── Secure storage helpers ────────────────────────────────────────────────────
+//   Falls back to localStorage when SecureStore is unavailable (web dev mode)
+const STORE_TOKEN_KEY = "healnet_fp_token";
+const STORE_USER_KEY  = "healnet_fp_user";
+
+async function saveCredentialsSecurely(token, user) {
+  if (SecureStore) {
+    await SecureStore.setItemAsync(STORE_TOKEN_KEY, token);
+    await SecureStore.setItemAsync(STORE_USER_KEY, JSON.stringify(user));
+  } else {
+    localStorage.setItem(STORE_TOKEN_KEY, token);
+    localStorage.setItem(STORE_USER_KEY, JSON.stringify(user));
+  }
+}
+
+async function loadCredentialsSecurely() {
+  if (SecureStore) {
+    const token = await SecureStore.getItemAsync(STORE_TOKEN_KEY);
+    const raw   = await SecureStore.getItemAsync(STORE_USER_KEY);
+    return { token, user: raw ? JSON.parse(raw) : null };
+  }
+  const token = localStorage.getItem(STORE_TOKEN_KEY);
+  const raw   = localStorage.getItem(STORE_USER_KEY);
+  return { token, user: raw ? JSON.parse(raw) : null };
+}
+
+async function clearCredentialsSecurely() {
+  if (SecureStore) {
+    await SecureStore.deleteItemAsync(STORE_TOKEN_KEY);
+    await SecureStore.deleteItemAsync(STORE_USER_KEY);
+  } else {
+    localStorage.removeItem(STORE_TOKEN_KEY);
+    localStorage.removeItem(STORE_USER_KEY);
+  }
+}
+
+// ── Fingerprint helpers ───────────────────────────────────────────────────────
+async function isFingerprintAvailable() {
+  if (!LocalAuthentication) return false;
+  const hasHardware  = await LocalAuthentication.hasHardwareAsync();
+  const isEnrolled   = await LocalAuthentication.isEnrolledAsync();
+  return hasHardware && isEnrolled;
+}
+
+async function promptFingerprint() {
+  if (!LocalAuthentication) return false;
+  const result = await LocalAuthentication.authenticateAsync({
+    promptMessage:  "Log in to HealNet",
+    fallbackLabel:  "Use Password",
+    cancelLabel:    "Cancel",
+    disableDeviceFallback: false,
+  });
+  return result.success;
+}
+
+// ── THEME ─────────────────────────────────────────────────────────────────────
 const C = {
   bg:     "#030c2c",
   card:   "#04163c",
@@ -19,7 +91,7 @@ const C = {
   muted:  "rgba(232,244,248,0.5)",
 };
 
-// ── RESPONSIVE HOOK ───────────────────────────────────────────────
+// ── RESPONSIVE HOOK ───────────────────────────────────────────────────────────
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   useEffect(() => {
@@ -30,7 +102,7 @@ function useIsMobile() {
   return isMobile;
 }
 
-// ── REUSABLE COMPONENTS ───────────────────────────────────────────
+// ── REUSABLE COMPONENTS ───────────────────────────────────────────────────────
 function Card({ children, style = {} }) {
   return (
     <div style={{
@@ -55,30 +127,144 @@ function Badge({ label, color }) {
   );
 }
 
-// ── ROLE-BASED PATIENT FILTER ─────────────────────────────────────
+// ── ROLE-BASED PATIENT FILTER ─────────────────────────────────────────────────
 function filterPatients(all, user) {
   if (user.kind === "solo") {
     const userEmail = (user.email || "").trim().toLowerCase();
-    const filtered = all.filter(p => (p.email || "").trim().toLowerCase() === userEmail);
-    console.log("[HealNet] solo filter | user.email:", userEmail, "| all patients:", all.length, "| matched:", filtered.length, filtered.map(p => p.email));
+    const filtered  = all.filter(p => (p.email || "").trim().toLowerCase() === userEmail);
+    console.log("[HealNet] solo filter | user.email:", userEmail,
+      "| all:", all.length, "| matched:", filtered.length);
     return filtered;
   }
   if (user.kind === "staff") return all.filter(p => p.org_id === user.org_id);
-  return all; // "org" sees everything
+  return all;
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+//  FINGERPRINT BANNER  (shown on login page when saved session detected)
+// ═══════════════════════════════════════════════════════════════════════════════
+function FingerprintBanner({ savedUser, onSuccess, onDismiss }) {
+  const [status, setStatus] = useState("idle"); // idle | scanning | failed
+
+  async function tryFingerprint() {
+    setStatus("scanning");
+    const passed = await promptFingerprint();
+    if (passed) {
+      const { token, user } = await loadCredentialsSecurely();
+      if (token && user) {
+        // Restore the session tokens so the rest of the app works normally
+        localStorage.setItem("healnet_token", token);
+        localStorage.setItem("healnet_user",  JSON.stringify(user));
+        onSuccess(user);
+      } else {
+        setStatus("failed");
+      }
+    } else {
+      setStatus("failed");
+    }
+  }
+
+  return (
+    <Card style={{ marginBottom: 20, borderColor: C.accent + "66", padding: 20 }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+        <div style={{ fontSize: 32 }}>
+          {status === "scanning" ? "⏳" : status === "failed" ? "❌" : "🔐"}
+        </div>
+        <div>
+          <div style={{ color: C.accent, fontWeight: 700, fontSize: 15 }}>
+            {status === "scanning" ? "Authenticating…"
+              : status === "failed"  ? "Authentication Failed"
+              : "Welcome back!"}
+          </div>
+          <div style={{ color: C.muted, fontSize: 12 }}>
+            {status === "failed"
+              ? "Use password login below"
+              : `Continue as ${savedUser.name}`}
+          </div>
+        </div>
+      </div>
+
+      {/* Fingerprint button */}
+      {status !== "failed" && (
+        <button
+          onClick={tryFingerprint}
+          disabled={status === "scanning"}
+          style={{
+            width: "100%", padding: "13px", borderRadius: 10, border: "none",
+            background: status === "scanning"
+              ? "rgba(59,201,232,0.3)"
+              : `linear-gradient(135deg, ${C.accent}, #0099bb)`,
+            color: C.bg, fontWeight: 700, fontSize: 15,
+            cursor: status === "scanning" ? "not-allowed" : "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+            marginTop: 12,
+          }}>
+          <span style={{ fontSize: 22 }}>👆</span>
+          {status === "scanning" ? "Checking fingerprint…" : "Log in with Fingerprint"}
+        </button>
+      )}
+
+      {/* Retry after failure */}
+      {status === "failed" && (
+        <button
+          onClick={() => setStatus("idle")}
+          style={{
+            width: "100%", padding: "10px", borderRadius: 10, marginTop: 10,
+            border: `1px solid ${C.accent}44`, background: "none",
+            color: C.accent, cursor: "pointer", fontSize: 13,
+          }}>
+          Try Again
+        </button>
+      )}
+
+      {/* Dismiss — use password instead */}
+      <button
+        onClick={onDismiss}
+        style={{
+          width: "100%", padding: "9px", borderRadius: 10, marginTop: 8,
+          border: `1px solid ${C.border}`, background: "none",
+          color: C.muted, cursor: "pointer", fontSize: 12,
+        }}>
+        Use a different account
+      </button>
+    </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  LOGIN PAGE
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 function LoginPage({ onLogin }) {
   const [mode, setMode]         = useState("login");
   const [form, setForm]         = useState({ name:"", email:"", password:"", kind:"solo" });
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState("");
   const [showPass, setShowPass] = useState(false);
-  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotMode, setForgotMode]   = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotMsg, setForgotMsg]     = useState("");
+
+  // ── Fingerprint state ──────────────────────────────────────────
+  const [fpAvailable, setFpAvailable]   = useState(false);  // device supports it
+  const [savedUser, setSavedUser]       = useState(null);    // previously saved user
+  const [showFpBanner, setShowFpBanner] = useState(false);  // show the banner
+  const [fpJustEnabled, setFpJustEnabled] = useState(false); // show "enabled" confirmation
+
+  // On mount: check hardware + check if a saved session exists
+  useEffect(() => {
+    (async () => {
+      const available = await isFingerprintAvailable();
+      setFpAvailable(available);
+      if (available) {
+        const { token, user } = await loadCredentialsSecurely();
+        if (token && user) {
+          setSavedUser(user);
+          setShowFpBanner(true);
+        }
+      }
+    })();
+  }, []);
 
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
@@ -92,9 +278,20 @@ function LoginPage({ onLogin }) {
         if (!form.name) { setError("Name is required"); setLoading(false); return; }
         res = await authAPI.signup(form.name, form.email, form.password, form.kind);
       }
-      localStorage.setItem("healnet_token", res.data.token);
-      localStorage.setItem("healnet_user",  JSON.stringify(res.data.user));
-      onLogin(res.data.user);
+      const { token, user } = res.data;
+
+      // Save to regular storage (for existing app logic)
+      localStorage.setItem("healnet_token", token);
+      localStorage.setItem("healnet_user",  JSON.stringify(user));
+
+      // ── If fingerprint is available, save credentials securely
+      //    so the user can use fingerprint next time
+      if (fpAvailable && mode === "login") {
+        await saveCredentialsSecurely(token, user);
+        setFpJustEnabled(true);
+      }
+
+      onLogin(user);
     } catch (e) {
       setError(e.response?.data?.detail || "Something went wrong");
     }
@@ -122,7 +319,7 @@ function LoginPage({ onLogin }) {
     }}>
       <div style={{ width: "100%", maxWidth: 420 }}>
 
-        {/* ── LOGO ─────────────────────────────────────────────── */}
+        {/* ── LOGO ──────────────────────────────────────────────── */}
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{ fontSize: 36, fontWeight: 800, color: C.accent, letterSpacing: -1 }}>
             🩺 HealNet
@@ -132,7 +329,21 @@ function LoginPage({ onLogin }) {
           </div>
         </div>
 
-        {/* ── FORGOT PASSWORD MODE ─────────────────────────────── */}
+        {/* ── FINGERPRINT BANNER (shown when saved session exists) ─ */}
+        {showFpBanner && savedUser && !forgotMode && (
+          <FingerprintBanner
+            savedUser={savedUser}
+            onSuccess={onLogin}
+            onDismiss={async () => {
+              // Clear saved creds and hide banner so they can log in fresh
+              await clearCredentialsSecurely();
+              setSavedUser(null);
+              setShowFpBanner(false);
+            }}
+          />
+        )}
+
+        {/* ── FORGOT PASSWORD MODE ───────────────────────────────── */}
         {forgotMode ? (
           <Card>
             <h3 style={{ margin: "0 0 6px", color: C.accent, fontSize: 18 }}>Forgot Password</h3>
@@ -149,7 +360,7 @@ function LoginPage({ onLogin }) {
             {forgotMsg && (
               <div style={{
                 color: forgotMsg.startsWith("✅") ? C.accent2 : C.danger,
-                fontSize: 13, marginBottom: 14, lineHeight: 1.5
+                fontSize: 13, marginBottom: 14, lineHeight: 1.5,
               }}>
                 {forgotMsg}
               </div>
@@ -171,9 +382,10 @@ function LoginPage({ onLogin }) {
               ← Back to Login
             </button>
           </Card>
+
         ) : (
 
-        // ── NORMAL LOGIN / SIGNUP ─────────────────────────────────
+        // ── NORMAL LOGIN / SIGNUP ──────────────────────────────────
         <Card>
           <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
             {["login", "signup"].map(m => (
@@ -199,7 +411,7 @@ function LoginPage({ onLogin }) {
               value={form.email} onChange={set("email")} style={inputStyle}
             />
 
-            {/* ── PASSWORD with show/hide ───────────────────────── */}
+            {/* ── PASSWORD with show/hide ────────────────────────── */}
             <div style={{ position: "relative" }}>
               <input
                 placeholder="Password"
@@ -229,7 +441,7 @@ function LoginPage({ onLogin }) {
               </select>
             )}
 
-            {/* ── FORGOT PASSWORD link ─────────────────────────── */}
+            {/* ── FORGOT PASSWORD link ───────────────────────────── */}
             {mode === "login" && (
               <div style={{ textAlign: "right", marginTop: -6 }}>
                 <button
@@ -257,23 +469,36 @@ function LoginPage({ onLogin }) {
                 color: C.bg, fontWeight: 700, fontSize: 15,
                 cursor: loading ? "not-allowed" : "pointer", marginTop: 4,
               }}>
-              {loading ? "Please wait..." : mode === "login" ? "Log In →" : "Create Account →"}
+              {loading ? "Please wait…"
+                : mode === "login" ? "Log In →"
+                : "Create Account →"}
             </button>
+
+            {/* ── FINGERPRINT HINT (shown if available but no saved session) */}
+            {fpAvailable && !showFpBanner && mode === "login" && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "10px 14px", borderRadius: 10,
+                background: "rgba(59,201,232,0.06)",
+                border: `1px solid ${C.border}`,
+              }}>
+                <span style={{ fontSize: 20 }}>👆</span>
+                <span style={{ color: C.muted, fontSize: 12, lineHeight: 1.4 }}>
+                  Log in once with your password and fingerprint login will be enabled automatically for next time.
+                </span>
+              </div>
+            )}
           </div>
         </Card>
         )}
 
-        {/* ── IOTRENETICS BRANDING ─────────────────────────────── */}
+        {/* ── IOTRENETICS BRANDING ───────────────────────────────── */}
         <div style={{ textAlign: "center", marginTop: 24 }}>
-          <div style={{ color: C.muted, fontSize: 11 }}>
-            A product of
-          </div>
+          <div style={{ color: C.muted, fontSize: 11 }}>A product of</div>
           <div style={{ color: C.accent, fontSize: 13, fontWeight: 700, marginTop: 3, letterSpacing: 0.5 }}>
             IoTrenetics Solutions Pvt. Ltd.
           </div>
-          <div style={{ color: C.muted, fontSize: 10, marginTop: 4 }}>
-            © 2024 All rights reserved
-          </div>
+          <div style={{ color: C.muted, fontSize: 10, marginTop: 4 }}>© 2024 All rights reserved</div>
         </div>
 
       </div>
@@ -281,20 +506,20 @@ function LoginPage({ onLogin }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 //  DASHBOARD
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 function Dashboard({ user, onLogout }) {
   const isMobile = useIsMobile();
-  const [page, setPage]           = useState("overview");
-  const [sidebarOpen, setSidebar] = useState(false);
-  const [patients, setPatients]   = useState([]);
-  const [alerts, setAlerts]       = useState([]);
-  const [stats, setStats]         = useState(null);
-  const [loading, setLoading]     = useState(true);
-  const [search, setSearch]       = useState("");
+  const [page, setPage]             = useState("overview");
+  const [sidebarOpen, setSidebar]   = useState(false);
+  const [patients, setPatients]     = useState([]);
+  const [alerts, setAlerts]         = useState([]);
+  const [stats, setStats]           = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [search, setSearch]         = useState("");
   const [selPatient, setSelPatient] = useState(null);
-  const [vitals, setVitals]       = useState([]);
+  const [vitals, setVitals]         = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -304,8 +529,6 @@ function Dashboard({ user, onLogout }) {
         alertsAPI.getAll(false),
         alertsAPI.stats(),
       ]);
-      // ── ROLE-BASED FILTER: solo sees only their own record,
-      //    staff sees only their org's patients, org sees all
       setPatients(filterPatients(pRes.data, user));
       setAlerts(aRes.data);
       setStats(sRes.data);
@@ -315,7 +538,7 @@ function Dashboard({ user, onLogout }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // ── AUTO-OPEN solo user's own patient record ──────────────────
+  // Auto-open solo user's own record
   useEffect(() => {
     if (user.kind === "solo" && patients.length === 1 && page === "overview") {
       openPatient(patients[0]);
@@ -342,23 +565,31 @@ function Dashboard({ user, onLogout }) {
     if (isMobile) setSidebar(false);
   }
 
+  // ── Full logout: clears both regular + secure storage ─────────
+  async function handleLogout() {
+    await clearCredentialsSecurely();
+    localStorage.removeItem("healnet_token");
+    localStorage.removeItem("healnet_user");
+    onLogout();
+  }
+
   const filtered = patients.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
     p.patient_id.toLowerCase().includes(search.toLowerCase())
   );
 
-  // ── NAV ITEMS: hide "Patients" list tab for solo users ────────
+  // Hide Patients tab for solo users
   const navItems = [
-    { id: "overview", label: "Overview",        icon: "📊" },
+    { id: "overview",    label: "Overview",        icon: "📊" },
     ...(user.kind !== "solo"
       ? [{ id: "patients", label: "Patients", icon: "👥" }]
       : []),
-    { id: "alerts",     label: "Alerts",          icon: "🚨" },
-    { id: "vitals",     label: "Add Vitals",      icon: "💓" },
-    { id: "ai",         label: "AI Insights",     icon: "🤖" },
-    { id: "pupil",      label: "Pupil Detection", icon: "👁"  },
-    { id: "camera",     label: "Camera Vitals",   icon: "📷" },
-    { id: "smartwatch", label: "Smartwatch",      icon: "⌚" },
+    { id: "alerts",      label: "Alerts",          icon: "🚨" },
+    { id: "vitals",      label: "Add Vitals",      icon: "💓" },
+    { id: "ai",          label: "AI Insights",     icon: "🤖" },
+    { id: "pupil",       label: "Pupil Detection", icon: "👁"  },
+    { id: "camera",      label: "Camera Vitals",   icon: "📷" },
+    { id: "smartwatch",  label: "Smartwatch",      icon: "⌚" },
   ];
 
   const inputStyle = {
@@ -368,7 +599,7 @@ function Dashboard({ user, onLogout }) {
     boxSizing: "border-box", fontFamily: "inherit",
   };
 
-  // ── SIDEBAR ────────────────────────────────────────────────────
+  // ── SIDEBAR ──────────────────────────────────────────────────────
   const Sidebar = () => (
     <div style={{
       width: isMobile ? "100%" : 230,
@@ -423,8 +654,10 @@ function Dashboard({ user, onLogout }) {
 
       <div style={{ padding: isMobile ? "12px 14px" : "16px 20px", borderTop: `1px solid ${C.border}` }}>
         <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{user.name}</div>
-        <div style={{ fontSize: 11, color: C.muted, marginBottom: 10, textTransform: "capitalize" }}>{user.kind}</div>
-        <button onClick={onLogout}
+        <div style={{ fontSize: 11, color: C.muted, marginBottom: 10, textTransform: "capitalize" }}>
+          {user.kind}
+        </div>
+        <button onClick={handleLogout}
           style={{
             width: "100%", padding: "8px", borderRadius: 8,
             background: "rgba(255,77,109,0.12)", border: `1px solid ${C.danger}44`,
@@ -442,7 +675,6 @@ function Dashboard({ user, onLogout }) {
       display: "flex", flexDirection: isMobile ? "column" : "row",
       fontFamily: "'Segoe UI', sans-serif", color: C.text,
     }}>
-      {/* ── MOBILE TOP BAR ─────────────────────────────────────── */}
       {isMobile && (
         <div style={{
           background: C.card, borderBottom: `1px solid ${C.border}`,
@@ -462,11 +694,9 @@ function Dashboard({ user, onLogout }) {
         </div>
       )}
 
-      {/* ── SIDEBAR ─────────────────────────────────────────────── */}
       {!isMobile && <Sidebar />}
       {isMobile && sidebarOpen && <Sidebar />}
 
-      {/* ── OVERLAY for mobile ───────────────────────────────────── */}
       {isMobile && sidebarOpen && (
         <div onClick={() => setSidebar(false)}
           style={{
@@ -475,7 +705,6 @@ function Dashboard({ user, onLogout }) {
           }} />
       )}
 
-      {/* ── MAIN CONTENT ────────────────────────────────────────── */}
       <div style={{ flex: 1, padding: isMobile ? "16px" : "32px", overflowY: "auto" }}>
         {loading ? (
           <div style={{ color: C.muted, textAlign: "center", paddingTop: 80, fontSize: 18 }}>
@@ -483,7 +712,6 @@ function Dashboard({ user, onLogout }) {
           </div>
         ) : (
           <>
-            {/* ── OVERVIEW ──────────────────────────────────────── */}
             {page === "overview" && (
               <div>
                 <h2 style={{ margin: "0 0 20px", fontSize: isMobile ? 20 : 24 }}>
@@ -492,7 +720,7 @@ function Dashboard({ user, onLogout }) {
                 <div style={{
                   display: "grid",
                   gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)",
-                  gap: 12, marginBottom: 24
+                  gap: 12, marginBottom: 24,
                 }}>
                   {[
                     { label: "Patients",       value: patients.length,            color: C.accent,  icon: "👥" },
@@ -534,12 +762,10 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── PATIENTS ──────────────────────────────────────── */}
             {page === "patients" && (
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
                   <h2 style={{ margin: 0, fontSize: isMobile ? 20 : 24 }}>Patients</h2>
-                  {/* ── Only org admins can add new patients ───── */}
                   {user.kind === "org" && <AddPatientForm onAdded={load} />}
                 </div>
                 <input
@@ -585,7 +811,6 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── PATIENT DETAIL ────────────────────────────────── */}
             {page === "patient" && selPatient && (
               <div>
                 <button onClick={() => setPage(user.kind === "solo" ? "overview" : "patients")}
@@ -595,7 +820,7 @@ function Dashboard({ user, onLogout }) {
                 <div style={{
                   display: "grid",
                   gridTemplateColumns: isMobile ? "1fr" : "1fr 2fr",
-                  gap: 16, marginBottom: 16
+                  gap: 16, marginBottom: 16,
                 }}>
                   <Card>
                     <h3 style={{ margin: "0 0 14px", color: C.accent, fontSize: 15 }}>Patient Info</h3>
@@ -660,7 +885,6 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── ALERTS ────────────────────────────────────────── */}
             {page === "alerts" && (
               <div>
                 <h2 style={{ margin: "0 0 20px", fontSize: isMobile ? 20 : 24 }}>Alerts</h2>
@@ -701,7 +925,6 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── ADD VITALS ────────────────────────────────────── */}
             {page === "vitals" && (
               <div>
                 <h2 style={{ margin: "0 0 20px", fontSize: isMobile ? 20 : 24 }}>Record Vitals</h2>
@@ -711,7 +934,6 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── AI INSIGHTS ───────────────────────────────────── */}
             {page === "ai" && (
               <div>
                 <h2 style={{ margin: "0 0 20px", fontSize: isMobile ? 20 : 24 }}>🤖 AI Insights</h2>
@@ -730,13 +952,8 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── PUPIL DETECTION ───────────────────────────────── */}
-            {page === "pupil" && <PupilPage />}
-
-            {/* ── CAMERA VITALS ─────────────────────────────────── */}
-            {page === "camera" && <CameraPage />}
-
-            {/* ── SMARTWATCH ────────────────────────────────────── */}
+            {page === "pupil"      && <PupilPage />}
+            {page === "camera"     && <CameraPage />}
             {page === "smartwatch" && <SmartWatchPage />}
           </>
         )}
@@ -745,9 +962,9 @@ function Dashboard({ user, onLogout }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 //  FORMS
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 function AddPatientForm({ onAdded }) {
   const isMobile = useIsMobile();
   const [open, setOpen]       = useState(false);
@@ -945,9 +1162,9 @@ function QuickVitalForm({ patients, onAdded, isMobile }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 //  ROOT APP
-// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 export default function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("healnet_user")); }
@@ -955,9 +1172,10 @@ export default function App() {
   });
 
   if (!user) return <LoginPage onLogin={u => setUser(u)} />;
-  return <Dashboard user={user} onLogout={() => {
-    localStorage.removeItem("healnet_token");
-    localStorage.removeItem("healnet_user");
-    setUser(null);
-  }} />;
+  return (
+    <Dashboard
+      user={user}
+      onLogout={() => setUser(null)}
+    />
+  );
 }
