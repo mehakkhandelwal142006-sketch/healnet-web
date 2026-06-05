@@ -12,65 +12,302 @@ import CameraPage     from "./pages/camerapage";
 import SmartWatchPage from "./pages/smartwatch";
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  BIOMETRIC HELPERS
+//  PIN SESSION HELPERS
+//  Works on any smartphone — no scanner, no WebAuthn registration needed.
+//  PIN is hashed (SHA-256) before storing so the raw digits never sit in
+//  localStorage in plain text.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const BIO_USER_KEY  = "healnet_bio_user";
-const BIO_TOKEN_KEY = "healnet_bio_token";
+const PIN_KEY       = "healnet_pin_hash";
+const PIN_USER_KEY  = "healnet_pin_user";
+const PIN_TOKEN_KEY = "healnet_pin_token";
 
-function saveBioSession(token, user) {
-  localStorage.setItem(BIO_TOKEN_KEY, token);
-  localStorage.setItem(BIO_USER_KEY,  JSON.stringify(user));
+async function hashPin(pin) {
+  const buf    = new TextEncoder().encode(pin);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2,"0")).join("");
 }
 
-function loadBioSession() {
+async function savePin(pin, token, user) {
+  const h = await hashPin(pin);
+  localStorage.setItem(PIN_KEY,       h);
+  localStorage.setItem(PIN_TOKEN_KEY, token);
+  localStorage.setItem(PIN_USER_KEY,  JSON.stringify(user));
+}
+
+async function verifyPin(pin) {
+  const stored = localStorage.getItem(PIN_KEY);
+  if (!stored) return false;
+  return (await hashPin(pin)) === stored;
+}
+
+function loadPinSession() {
   try {
-    const token = localStorage.getItem(BIO_TOKEN_KEY);
-    const user  = JSON.parse(localStorage.getItem(BIO_USER_KEY));
+    const token = localStorage.getItem(PIN_TOKEN_KEY);
+    const user  = JSON.parse(localStorage.getItem(PIN_USER_KEY));
     return (token && user) ? { token, user } : null;
   } catch { return null; }
 }
 
-function clearBioSession() {
-  localStorage.removeItem(BIO_TOKEN_KEY);
-  localStorage.removeItem(BIO_USER_KEY);
+function clearPinSession() {
+  localStorage.removeItem(PIN_KEY);
+  localStorage.removeItem(PIN_TOKEN_KEY);
+  localStorage.removeItem(PIN_USER_KEY);
 }
 
-async function isBiometricAvailable() {
-  try {
-    if (!window.PublicKeyCredential) return false;
-    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-  } catch { return false; }
+function hasPinSet() {
+  return !!localStorage.getItem(PIN_KEY);
 }
 
-// ─── FIX 1: Handle errors properly ───────────────────────────────────────────
-// allowCredentials: [] requires a pre-registered passkey which we don't have.
-// Solution: if the error is anything OTHER than "user cancelled" (NotAllowedError),
-// treat it as "hardware present but no credential registered" → still pass the gate.
-// The real security is the saved JWT + being on the same physical device.
-async function promptBiometric() {
-  try {
-    const challenge = new Uint8Array(32);
-    window.crypto.getRandomValues(challenge);
+// ─────────────────────────────────────────────────────────────────────────────
+//  PIN PAD — shared number grid used by both Setup and Login screens
+// ─────────────────────────────────────────────────────────────────────────────
+function PinPad({ onDigit, onDelete }) {
+  const keys = ["1","2","3","4","5","6","7","8","9","","0","⌫"];
+  return (
+    <div style={{
+      display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
+      gap: 12, maxWidth: 280, margin: "0 auto",
+    }}>
+      {keys.map((k, i) => (
+        <button
+          key={i}
+          onClick={() => k === "⌫" ? onDelete() : k ? onDigit(k) : null}
+          disabled={!k}
+          style={{
+            height: 64, borderRadius: 14, border: "none",
+            background: k === "⌫"  ? "rgba(255,77,109,0.15)"
+                      : k === ""   ? "transparent"
+                      : "rgba(59,201,232,0.10)",
+            color: k === "⌫" ? C.danger : C.text,
+            fontSize: k === "⌫" ? 22 : 24, fontWeight: 700,
+            cursor: k ? "pointer" : "default",
+            transition: "background 0.15s",
+            WebkitTapHighlightColor: "transparent",
+          }}
+          onTouchStart={e => {
+            if (!k) return;
+            e.currentTarget.style.background =
+              k === "⌫" ? "rgba(255,77,109,0.30)" : "rgba(59,201,232,0.28)";
+          }}
+          onTouchEnd={e => {
+            e.currentTarget.style.background =
+              k === "⌫" ? "rgba(255,77,109,0.15)"
+              : k === "" ? "transparent"
+              : "rgba(59,201,232,0.10)";
+          }}
+        >
+          {k}
+        </button>
+      ))}
+    </div>
+  );
+}
 
-    await navigator.credentials.get({
-      publicKey: {
-        challenge,
-        timeout: 60000,
-        userVerification: "required",
-        allowCredentials: [],
-        rpId: window.location.hostname,
-      },
-    });
-    return true;  // WebAuthn passed ✓
-  } catch (err) {
-    console.log("[HealNet] biometric result:", err.name);
-    // NotAllowedError = user actively cancelled or timed out → reject
-    // Everything else (NotSupportedError, SecurityError, no credentials) →
-    // the device's OS biometric HW is available; treat as passed.
-    if (err.name === "NotAllowedError") return false;
-    return true;
+// ─────────────────────────────────────────────────────────────────────────────
+//  PIN DOTS — visual indicator of how many digits have been entered
+// ─────────────────────────────────────────────────────────────────────────────
+function PinDots({ count, total = 4, error }) {
+  return (
+    <div style={{ display: "flex", gap: 14, justifyContent: "center", marginBottom: 32 }}>
+      {Array.from({ length: total }).map((_, i) => (
+        <div key={i} style={{
+          width: 16, height: 16, borderRadius: "50%",
+          background: i < count
+            ? (error ? C.danger : C.accent)
+            : "rgba(59,201,232,0.18)",
+          transition: "background 0.2s, transform 0.15s",
+          transform: i < count ? "scale(1.2)" : "scale(1)",
+          border: `2px solid ${i < count ? (error ? C.danger : C.accent) : "rgba(59,201,232,0.3)"}`,
+        }} />
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PIN SETUP MODAL — shown once after first password login
+// ─────────────────────────────────────────────────────────────────────────────
+function PinSetupModal({ token, user, onDone, onSkip }) {
+  const [step, setStep]       = useState("set");   // "set" | "confirm"
+  const [first, setFirst]     = useState("");
+  const [second, setSecond]   = useState("");
+  const [error, setError]     = useState(false);
+  const PIN_LEN = 4;
+
+  const current = step === "set" ? first : second;
+  const setPin  = step === "set" ? setFirst : setSecond;
+
+  function onDigit(d) {
+    if (current.length >= PIN_LEN) return;
+    const next = current + d;
+    setPin(next);
+    setError(false);
+    if (next.length === PIN_LEN) {
+      setTimeout(() => advance(next), 180);
+    }
   }
+
+  function onDelete() {
+    setPin(p => p.slice(0, -1));
+    setError(false);
+  }
+
+  async function advance(val) {
+    if (step === "set") {
+      setStep("confirm");
+    } else {
+      // Confirm step — check they match
+      if (val === first) {
+        await savePin(val, token, user);
+        onDone();
+      } else {
+        setError(true);
+        setSecond("");
+        setTimeout(() => { setError(false); setStep("set"); setFirst(""); }, 900);
+      }
+    }
+  }
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 300,
+      background: "rgba(3,12,44,0.96)",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      padding: 24, fontFamily: "'Segoe UI', sans-serif",
+    }}>
+      <div style={{ fontSize: 42, marginBottom: 12 }}>🔒</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color: C.accent, marginBottom: 8 }}>
+        {step === "set" ? "Set a Quick PIN" : "Confirm your PIN"}
+      </div>
+      <div style={{ fontSize: 13, color: C.muted, marginBottom: 32, textAlign: "center", lineHeight: 1.6 }}>
+        {step === "set"
+          ? "Create a 4-digit PIN for faster login next time"
+          : "Enter the same PIN again to confirm"}
+      </div>
+
+      <PinDots count={current.length} error={error} />
+      {error && (
+        <div style={{ color: C.danger, fontSize: 13, marginBottom: 16, marginTop: -20 }}>
+          PINs don't match — try again
+        </div>
+      )}
+
+      <PinPad onDigit={onDigit} onDelete={onDelete} />
+
+      <button onClick={onSkip} style={{
+        marginTop: 32, background: "none", border: "none",
+        color: C.muted, fontSize: 13, cursor: "pointer",
+        textDecoration: "underline", padding: 8,
+      }}>
+        Skip for now
+      </button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PIN LOGIN SCREEN — shown on return visits instead of password form
+// ─────────────────────────────────────────────────────────────────────────────
+function PinLoginScreen({ savedUser, onSuccess, onUsePassword }) {
+  const [pin, setPin]     = useState("");
+  const [error, setError] = useState(false);
+  const PIN_LEN = 4;
+
+  async function onDigit(d) {
+    if (pin.length >= PIN_LEN) return;
+    const next = pin + d;
+    setPin(next);
+    setError(false);
+    if (next.length === PIN_LEN) {
+      setTimeout(() => check(next), 180);
+    }
+  }
+
+  function onDelete() {
+    setPin(p => p.slice(0, -1));
+    setError(false);
+  }
+
+  async function check(val) {
+    const ok = await verifyPin(val);
+    if (ok) {
+      const session = loadPinSession();
+      if (session) {
+        localStorage.setItem("healnet_token", session.token);
+        localStorage.setItem("healnet_user",  JSON.stringify(session.user));
+        sessionStorage.setItem("healnet_tab_active", "1");
+        onSuccess(session.user);
+      }
+    } else {
+      setError(true);
+      setTimeout(() => { setError(false); setPin(""); }, 700);
+    }
+  }
+
+  // avatar initials
+  const initials = (savedUser.name || "?").split(" ").map(w => w[0]).join("").toUpperCase().slice(0,2);
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: C.bg,
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      padding: 24, fontFamily: "'Segoe UI', sans-serif",
+    }}>
+      {/* Avatar */}
+      <div style={{
+        width: 72, height: 72, borderRadius: "50%",
+        background: `linear-gradient(135deg, ${C.accent}44, ${C.accent}88)`,
+        border: `2px solid ${C.accent}`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 26, fontWeight: 800, color: C.accent,
+        marginBottom: 14,
+      }}>
+        {initials}
+      </div>
+
+      <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 4 }}>
+        Welcome back, {savedUser.name.split(" ")[0]}!
+      </div>
+      <div style={{ fontSize: 13, color: C.muted, marginBottom: 36 }}>
+        Enter your PIN to continue
+      </div>
+
+      <PinDots count={pin.length} error={error} />
+      {error && (
+        <div style={{ color: C.danger, fontSize: 13, marginBottom: 16, marginTop: -20 }}>
+          Incorrect PIN — try again
+        </div>
+      )}
+
+      <PinPad onDigit={onDigit} onDelete={onDelete} />
+
+      {/* Options */}
+      <div style={{ marginTop: 32, display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+        <button onClick={onUsePassword} style={{
+          background: "none", border: `1px solid ${C.border}`,
+          color: C.muted, fontSize: 13, cursor: "pointer",
+          borderRadius: 10, padding: "10px 24px",
+        }}>
+          Use password instead
+        </button>
+        <button onClick={() => { clearPinSession(); onUsePassword(); }} style={{
+          background: "none", border: "none",
+          color: C.muted, fontSize: 12, cursor: "pointer",
+          textDecoration: "underline", padding: 4,
+        }}>
+          Use a different account
+        </button>
+      </div>
+
+      {/* Logo */}
+      <div style={{ position: "absolute", top: 24, textAlign: "center" }}>
+        <div style={{ fontSize: 22, fontWeight: 800, color: C.accent }}>🩺 HealNet</div>
+      </div>
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -141,131 +378,6 @@ function filterPatients(all, user) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  BIOMETRIC BANNER
-// ─────────────────────────────────────────────────────────────────────────────
-function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
-  const [status, setStatus] = useState("idle");
-
-  async function handleBiometric() {
-    setStatus("waiting");
-
-    const available = await isBiometricAvailable();
-    if (!available) {
-      // No platform authenticator at all — restore session directly
-      // (device-level trust: only the person with access to this device
-      //  could have the bio session in localStorage)
-      const session = loadBioSession();
-      if (session) {
-        localStorage.setItem("healnet_token", session.token);
-        localStorage.setItem("healnet_user",  JSON.stringify(session.user));
-        sessionStorage.setItem("healnet_tab_active", "1");
-        onSuccess(session.user);
-      } else {
-        setStatus("unsupported");
-      }
-      return;
-    }
-
-    const passed = await promptBiometric();
-    if (passed) {
-      const session = loadBioSession();
-      if (session) {
-        localStorage.setItem("healnet_token", session.token);
-        localStorage.setItem("healnet_user",  JSON.stringify(session.user));
-        sessionStorage.setItem("healnet_tab_active", "1");
-        onSuccess(session.user);
-      } else {
-        setStatus("failed");
-      }
-    } else {
-      // User actively cancelled the biometric prompt
-      setStatus("failed");
-    }
-  }
-
-  const icon    = status === "waiting" ? "⏳"
-                : status === "failed"  ? "❌"
-                : "🔐";
-
-  const title   = status === "waiting"     ? "Verifying identity…"
-                : status === "failed"      ? "Verification failed"
-                : status === "unsupported" ? "Biometric unavailable"
-                : `Welcome back, ${savedUser.name}!`;
-
-  const subtitle = status === "waiting"     ? "Complete the prompt on your device"
-                 : status === "failed"      ? "Use your password below to sign in"
-                 : status === "unsupported" ? "Use your password below"
-                 : "Use biometrics to continue instantly";
-
-  return (
-    <Card style={{ marginBottom: 20, borderColor: C.accent + "55", padding: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
-        <div style={{
-          width: 52, height: 52, borderRadius: 14,
-          background: `linear-gradient(135deg, ${C.accent}22, ${C.accent}44)`,
-          border: `1px solid ${C.accent}44`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 26, flexShrink: 0,
-        }}>
-          {icon}
-        </div>
-        <div>
-          <div style={{ color: C.text, fontWeight: 700, fontSize: 15 }}>{title}</div>
-          <div style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>{subtitle}</div>
-        </div>
-      </div>
-
-      {status === "idle" && (
-        <button
-          onClick={handleBiometric}
-          style={{
-            width: "100%", padding: "13px", borderRadius: 10, border: "none",
-            background: `linear-gradient(135deg, ${C.accent}, #0099bb)`,
-            color: C.bg, fontWeight: 700, fontSize: 15,
-            cursor: "pointer", marginBottom: 10,
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-          }}>
-          <span style={{ fontSize: 20 }}>👆</span>
-          Continue with Biometrics
-        </button>
-      )}
-
-      {status === "waiting" && (
-        <div style={{
-          width: "100%", padding: "13px", borderRadius: 10,
-          background: "rgba(59,201,232,0.1)", border: `1px solid ${C.border}`,
-          color: C.muted, fontSize: 14, textAlign: "center", marginBottom: 10,
-        }}>
-          Waiting for device verification…
-        </div>
-      )}
-
-      {(status === "failed" || status === "unsupported") && (
-        <button
-          onClick={() => setStatus("idle")}
-          style={{
-            width: "100%", padding: "10px", borderRadius: 10, marginBottom: 10,
-            border: `1px solid ${C.accent}44`, background: "none",
-            color: C.accent, cursor: "pointer", fontSize: 13,
-          }}>
-          Try Again
-        </button>
-      )}
-
-      <button
-        onClick={() => { clearBioSession(); onDismiss(); }}
-        style={{
-          width: "100%", padding: "9px", borderRadius: 10,
-          border: `1px solid ${C.border}`, background: "none",
-          color: C.muted, cursor: "pointer", fontSize: 12,
-        }}>
-        Use a different account
-      </button>
-    </Card>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 //  LOGIN PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
@@ -278,14 +390,17 @@ function LoginPage({ onLogin }) {
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotMsg, setForgotMsg]     = useState("");
 
-  const [bioSession, setBioSession]       = useState(null);
-  const [showBioBanner, setShowBioBanner] = useState(false);
+  // PIN state
+  const [pinSession, setPinSession]   = useState(null);
+  const [showPin, setShowPin]         = useState(false);
+  const [showPinSetup, setShowPinSetup] = useState(false);
+  const [pendingAuth, setPendingAuth]   = useState(null); // { token, user }
 
   useEffect(() => {
-    const session = loadBioSession();
-    if (session?.user) {
-      setBioSession(session);
-      setShowBioBanner(true);
+    const session = loadPinSession();
+    if (session?.user && hasPinSet()) {
+      setPinSession(session);
+      setShowPin(true);
     }
   }, []);
 
@@ -305,14 +420,21 @@ function LoginPage({ onLogin }) {
 
       localStorage.setItem("healnet_token", token);
       localStorage.setItem("healnet_user",  JSON.stringify(user));
-
-      // Mark this tab as authenticated so Dashboard loads directly on refresh
       sessionStorage.setItem("healnet_tab_active", "1");
 
-      // Always save bio session on successful login so next visit shows banner
-      saveBioSession(token, user);
-
-      onLogin(user);
+      // If no PIN set yet, offer setup; otherwise go straight in
+      if (!hasPinSet()) {
+        setPendingAuth({ token, user });
+        setShowPinSetup(true);
+      } else {
+        // Update the saved PIN session token (in case it expired and re-logged)
+        const currentPin = localStorage.getItem(PIN_KEY);
+        if (currentPin) {
+          localStorage.setItem(PIN_TOKEN_KEY, token);
+          localStorage.setItem(PIN_USER_KEY,  JSON.stringify(user));
+        }
+        onLogin(user);
+      }
     } catch (e) {
       setError(e.response?.data?.detail || "Something went wrong");
     }
@@ -322,6 +444,29 @@ function LoginPage({ onLogin }) {
   async function handleForgot() {
     if (!forgotEmail) { setForgotMsg("Please enter your email"); return; }
     setForgotMsg("✅ If this email is registered, a reset link has been sent. Please contact your admin.");
+  }
+
+  // Show PIN login screen on return visits
+  if (showPin && pinSession) {
+    return (
+      <PinLoginScreen
+        savedUser={pinSession.user}
+        onSuccess={onLogin}
+        onUsePassword={() => setShowPin(false)}
+      />
+    );
+  }
+
+  // Show PIN setup modal after first password login
+  if (showPinSetup && pendingAuth) {
+    return (
+      <PinSetupModal
+        token={pendingAuth.token}
+        user={pendingAuth.user}
+        onDone={() => { setShowPinSetup(false); onLogin(pendingAuth.user); }}
+        onSkip={() => { setShowPinSetup(false); onLogin(pendingAuth.user); }}
+      />
+    );
   }
 
   const inputStyle = {
@@ -348,14 +493,6 @@ function LoginPage({ onLogin }) {
             PREDICT · PREVENT · PERSONALIZE
           </div>
         </div>
-
-        {showBioBanner && bioSession && !forgotMode && (
-          <BiometricBanner
-            savedUser={bioSession.user}
-            onSuccess={onLogin}
-            onDismiss={() => setShowBioBanner(false)}
-          />
-        )}
 
         {forgotMode ? (
           <Card>
@@ -476,17 +613,17 @@ function LoginPage({ onLogin }) {
                   : "Create Account →"}
               </button>
 
-              {/* ── FIX 2: Only show hint when no bio session exists yet ── */}
-              {mode === "login" && !showBioBanner && (
+              {/* PIN hint */}
+              {mode === "login" && !hasPinSet() && (
                 <div style={{
                   display: "flex", alignItems: "center", gap: 10,
                   padding: "10px 14px", borderRadius: 10,
                   background: "rgba(59,201,232,0.05)",
                   border: `1px solid ${C.border}`,
                 }}>
-                  <span style={{ fontSize: 18 }}>🔐</span>
+                  <span style={{ fontSize: 18 }}>🔒</span>
                   <span style={{ color: C.muted, fontSize: 12, lineHeight: 1.5 }}>
-                    After signing in, biometric login will be available on your next visit.
+                    After signing in, you can set a 4-digit PIN for faster access next time.
                   </span>
                 </div>
               )}
@@ -564,11 +701,13 @@ function Dashboard({ user, onLogout }) {
 
   // ── FIX 2: Don't clear bio session on logout ──────────────────────────────
   // The bio session must persist so the banner appears on the user's next visit.
-  // Only "Use a different account" (in BiometricBanner) should call clearBioSession().
+  // Only "Use a different account" (in PinLoginScreen) calls clearPinSession().
   function handleLogout() {
     sessionStorage.removeItem("healnet_tab_active");
     localStorage.removeItem("healnet_token");
     localStorage.removeItem("healnet_user");
+    // Keep PIN session so user gets PIN screen on next visit
+    // Only clearPinSession() if they use "different account"
     onLogout();
   }
 
