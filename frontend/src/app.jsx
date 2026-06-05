@@ -158,6 +158,7 @@ function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
       if (session) {
         localStorage.setItem("healnet_token", session.token);
         localStorage.setItem("healnet_user",  JSON.stringify(session.user));
+        sessionStorage.setItem("healnet_tab_active", "1");
         onSuccess(session.user);
       } else {
         setStatus("unsupported");
@@ -171,6 +172,7 @@ function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
       if (session) {
         localStorage.setItem("healnet_token", session.token);
         localStorage.setItem("healnet_user",  JSON.stringify(session.user));
+        sessionStorage.setItem("healnet_tab_active", "1");
         onSuccess(session.user);
       } else {
         setStatus("failed");
@@ -303,6 +305,9 @@ function LoginPage({ onLogin }) {
 
       localStorage.setItem("healnet_token", token);
       localStorage.setItem("healnet_user",  JSON.stringify(user));
+
+      // Mark this tab as authenticated so Dashboard loads directly on refresh
+      sessionStorage.setItem("healnet_tab_active", "1");
 
       // Always save bio session on successful login so next visit shows banner
       saveBioSession(token, user);
@@ -561,6 +566,7 @@ function Dashboard({ user, onLogout }) {
   // The bio session must persist so the banner appears on the user's next visit.
   // Only "Use a different account" (in BiometricBanner) should call clearBioSession().
   function handleLogout() {
+    sessionStorage.removeItem("healnet_tab_active");
     localStorage.removeItem("healnet_token");
     localStorage.removeItem("healnet_user");
     onLogout();
@@ -1139,6 +1145,10 @@ function QuickVitalForm({ patients, onAdded, isMobile }) {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(() => {
+    // sessionStorage is cleared when the tab is closed or reopened,
+    // so fresh visits always go through LoginPage → bio banner shows
+    const tabActive = sessionStorage.getItem("healnet_tab_active");
+    if (!tabActive) return null;
     try { return JSON.parse(localStorage.getItem("healnet_user")); }
     catch { return null; }
   });
