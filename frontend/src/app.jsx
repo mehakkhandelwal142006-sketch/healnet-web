@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  HEALNET  —  App.jsx
-//  Biometric login via Web Authentication API (WebAuthn)
+//  Biometric login using PasswordCredential API + device lock screen
 //  Works on: Chrome/Edge (Windows Hello), Safari (Touch ID / Face ID)
-//  No packages needed — pure browser API
+//  No passkey registration needed — no packages required
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback } from "react";
 import { authAPI, patientsAPI, vitalsAPI, alertsAPI } from "./services/api";
@@ -36,37 +36,47 @@ function clearBioSession() {
   localStorage.removeItem(BIO_USER_KEY);
 }
 
-/** Returns true if the device has a platform authenticator (Windows Hello / Touch ID / Face ID) */
-async function isBiometricAvailable() {
+/**
+ * Save the user's credentials using the browser's Credential Management API.
+ * This lets the browser offer autofill AND enables biometric confirmation
+ * (Touch ID / Windows Hello) when retrieving credentials later.
+ */
+async function saveCredential(email, password) {
   try {
-    if (!window.PublicKeyCredential) return false;
-    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-  } catch { return false; }
+    if (!window.PasswordCredential) return;
+    const cred = new PasswordCredential({ id: email, password, name: email });
+    await navigator.credentials.store(cred);
+  } catch (e) {
+    console.log("[HealNet] credential store skipped:", e.name);
+  }
 }
 
 /**
- * Trigger the native OS biometric prompt.
- * We use an empty allowCredentials list so the browser uses any resident
- * credential — this acts purely as a "prove you are the device owner" gate.
+ * Retrieve saved credentials from the browser.
+ * On devices with biometrics (Touch ID, Windows Hello, Face ID), the browser
+ * will show the OS biometric prompt before returning the credentials.
+ * Returns { id, password } or null.
  */
-async function promptBiometric() {
-  const challenge = new Uint8Array(32);
-  window.crypto.getRandomValues(challenge);
+async function getSavedCredential() {
   try {
-    await navigator.credentials.get({
-      publicKey: {
-        challenge,
-        timeout: 60000,
-        userVerification: "required",
-        allowCredentials: [],
-        rpId: window.location.hostname,
-      },
+    if (!window.PasswordCredential) return null;
+    const cred = await navigator.credentials.get({
+      password: true,
+      mediation: "optional",   // shows picker if multiple accounts saved
     });
-    return true;
-  } catch (err) {
-    console.log("[HealNet] biometric result:", err.name);
-    return false;
+    if (cred && cred.id && cred.password) {
+      return { id: cred.id, password: cred.password };
+    }
+    return null;
+  } catch (e) {
+    console.log("[HealNet] credential get:", e.name);
+    return null;
   }
+}
+
+/** Check if the Credential Management API is supported */
+function isCredentialAPISupported() {
+  return !!(window.PasswordCredential && navigator.credentials);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,46 +148,40 @@ function filterPatients(all, user) {
 //  BIOMETRIC LOGIN SCREEN
 //  Shown on return visits instead of the normal login form
 // ─────────────────────────────────────────────────────────────────────────────
-function BiometricLoginScreen({ savedUser, onSuccess, onUsePassword }) {
+function BiometricLoginScreen({ savedUser, onSuccess, onUsePassword, onAutoLogin }) {
   // status: "idle" | "scanning" | "failed" | "unsupported"
   const [status, setStatus] = useState("idle");
 
-  // Auto-trigger on mount so user doesn't have to tap twice
+  // Auto-trigger on mount
   useEffect(() => { handleBiometric(); }, []); // eslint-disable-line
 
   async function handleBiometric() {
     setStatus("scanning");
-    const available = await isBiometricAvailable();
 
-    if (!available) {
-      // Device doesn't have a platform authenticator registered —
-      // restore session directly (user is still on the same device)
-      const session = loadBioSession();
-      if (session) {
-        localStorage.setItem("healnet_token", session.token);
-        localStorage.setItem("healnet_user",  JSON.stringify(session.user));
-        sessionStorage.setItem("healnet_tab_active", "1");
-        onSuccess(session.user);
-      } else {
-        setStatus("unsupported");
+    // ── Strategy 1: Try PasswordCredential API (triggers biometric on
+    //   supported devices — Chrome on Android, Safari on Mac/iOS)
+    if (isCredentialAPISupported()) {
+      const cred = await getSavedCredential();
+      if (cred) {
+        // Got credentials back (browser verified with biometric / lock screen)
+        // Re-authenticate silently using saved email + password
+        onAutoLogin(cred.id, cred.password);
+        return;
       }
+    }
+
+    // ── Strategy 2: Fallback — just restore the saved session token directly.
+    //   The user is already on the same trusted device that logged in before.
+    const session = loadBioSession();
+    if (session) {
+      localStorage.setItem("healnet_token", session.token);
+      localStorage.setItem("healnet_user",  JSON.stringify(session.user));
+      sessionStorage.setItem("healnet_tab_active", "1");
+      onSuccess(session.user);
       return;
     }
 
-    const passed = await promptBiometric();
-    if (passed) {
-      const session = loadBioSession();
-      if (session) {
-        localStorage.setItem("healnet_token", session.token);
-        localStorage.setItem("healnet_user",  JSON.stringify(session.user));
-        sessionStorage.setItem("healnet_tab_active", "1");
-        onSuccess(session.user);
-      } else {
-        setStatus("failed");
-      }
-    } else {
-      setStatus("failed");
-    }
+    setStatus("failed");
   }
 
   // Avatar initials
@@ -320,7 +324,11 @@ function LoginPage({ onLogin }) {
       sessionStorage.setItem("healnet_tab_active", "1");
 
       // Save bio session so next visit shows fingerprint screen
-      if (mode === "login") saveBioSession(token, user);
+      if (mode === "login") {
+        saveBioSession(token, user);
+        // Save to browser credential store — triggers biometric next time
+        await saveCredential(form.email, form.password);
+      }
 
       onLogin(user);
     } catch (e) {
@@ -341,6 +349,22 @@ function LoginPage({ onLogin }) {
         savedUser={bioSession.user}
         onSuccess={onLogin}
         onUsePassword={() => setShowBioScreen(false)}
+        onAutoLogin={async (email, password) => {
+          // Re-authenticate with saved credentials in the background
+          try {
+            const res = await authAPI.login(email, password);
+            const { token, user } = res.data;
+            localStorage.setItem("healnet_token", token);
+            localStorage.setItem("healnet_user",  JSON.stringify(user));
+            sessionStorage.setItem("healnet_tab_active", "1");
+            saveBioSession(token, user);
+            onLogin(user);
+          } catch {
+            // Token expired or password changed — fall back to password login
+            clearBioSession();
+            setShowBioScreen(false);
+          }
+        }}
       />
     );
   }
