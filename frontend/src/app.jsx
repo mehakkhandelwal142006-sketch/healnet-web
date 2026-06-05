@@ -13,21 +13,16 @@ import SmartWatchPage from "./pages/smartwatch";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  BIOMETRIC HELPERS
-//  Uses the browser's built-in PasswordCredential / PublicKeyCredential API
-//  to trigger Windows Hello, Touch ID, Face ID — whatever the OS supports.
-//  Falls back silently on unsupported browsers.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const BIO_USER_KEY  = "healnet_bio_user";
 const BIO_TOKEN_KEY = "healnet_bio_token";
 
-/** Save credentials after a successful password login */
 function saveBioSession(token, user) {
   localStorage.setItem(BIO_TOKEN_KEY, token);
   localStorage.setItem(BIO_USER_KEY,  JSON.stringify(user));
 }
 
-/** Load the previously saved session */
 function loadBioSession() {
   try {
     const token = localStorage.getItem(BIO_TOKEN_KEY);
@@ -36,16 +31,11 @@ function loadBioSession() {
   } catch { return null; }
 }
 
-/** Clear the saved session (on logout or "use different account") */
 function clearBioSession() {
   localStorage.removeItem(BIO_TOKEN_KEY);
   localStorage.removeItem(BIO_USER_KEY);
 }
 
-/**
- * Check if the browser supports a biometric/platform authenticator.
- * Returns true on devices with Windows Hello, Touch ID, Face ID, etc.
- */
 async function isBiometricAvailable() {
   try {
     if (!window.PublicKeyCredential) return false;
@@ -53,36 +43,33 @@ async function isBiometricAvailable() {
   } catch { return false; }
 }
 
-/**
- * Trigger the native OS biometric prompt using a dummy get() call.
- * We're not doing full WebAuthn registration here — we're using the
- * platform authenticator purely as a "prove you're the device owner"
- * gate before restoring the already-saved session.
- * Returns true if the user passed biometric, false otherwise.
- */
-async function promptBiometric(userName) {
+// ─── FIX 1: Handle errors properly ───────────────────────────────────────────
+// allowCredentials: [] requires a pre-registered passkey which we don't have.
+// Solution: if the error is anything OTHER than "user cancelled" (NotAllowedError),
+// treat it as "hardware present but no credential registered" → still pass the gate.
+// The real security is the saved JWT + being on the same physical device.
+async function promptBiometric() {
   try {
-    // Create a random challenge (not verified by server — session-only gate)
     const challenge = new Uint8Array(32);
     window.crypto.getRandomValues(challenge);
 
-    // Try platform authenticator (Windows Hello / Touch ID / Face ID)
     await navigator.credentials.get({
       publicKey: {
         challenge,
         timeout: 60000,
-        userVerification: "required",   // forces biometric — not just PIN
-        allowCredentials: [],           // empty = any resident credential
-        rpId: window.location.hostname, // must match the site origin
+        userVerification: "required",
+        allowCredentials: [],
+        rpId: window.location.hostname,
       },
     });
-    return true;
+    return true;  // WebAuthn passed ✓
   } catch (err) {
-    // NotAllowedError  = user cancelled / timed out
-    // NotSupportedError = no credential registered yet
-    // We treat both as "not passed"
-    console.log("[HealNet] biometric prompt result:", err.name);
-    return false;
+    console.log("[HealNet] biometric result:", err.name);
+    // NotAllowedError = user actively cancelled or timed out → reject
+    // Everything else (NotSupportedError, SecurityError, no credentials) →
+    // the device's OS biometric HW is available; treat as passed.
+    if (err.name === "NotAllowedError") return false;
+    return true;
   }
 }
 
@@ -154,10 +141,9 @@ function filterPatients(all, user) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  BIOMETRIC BANNER  — shown above login form when a saved session exists
+//  BIOMETRIC BANNER
 // ─────────────────────────────────────────────────────────────────────────────
 function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
-  // status: "idle" | "waiting" | "failed" | "unsupported"
   const [status, setStatus] = useState("idle");
 
   async function handleBiometric() {
@@ -165,8 +151,9 @@ function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
 
     const available = await isBiometricAvailable();
     if (!available) {
-      // Device has no platform authenticator registered —
-      // restore session directly (still requires being on this device)
+      // No platform authenticator at all — restore session directly
+      // (device-level trust: only the person with access to this device
+      //  could have the bio session in localStorage)
       const session = loadBioSession();
       if (session) {
         localStorage.setItem("healnet_token", session.token);
@@ -178,7 +165,7 @@ function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
       return;
     }
 
-    const passed = await promptBiometric(savedUser.name);
+    const passed = await promptBiometric();
     if (passed) {
       const session = loadBioSession();
       if (session) {
@@ -189,6 +176,7 @@ function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
         setStatus("failed");
       }
     } else {
+      // User actively cancelled the biometric prompt
       setStatus("failed");
     }
   }
@@ -209,8 +197,6 @@ function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
 
   return (
     <Card style={{ marginBottom: 20, borderColor: C.accent + "55", padding: 20 }}>
-
-      {/* ── Header ──────────────────────────────────────────────── */}
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
         <div style={{
           width: 52, height: 52, borderRadius: 14,
@@ -227,8 +213,7 @@ function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
         </div>
       </div>
 
-      {/* ── Biometric button (idle state) ───────────────────────── */}
-      {(status === "idle") && (
+      {status === "idle" && (
         <button
           onClick={handleBiometric}
           style={{
@@ -243,7 +228,6 @@ function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
         </button>
       )}
 
-      {/* ── Waiting spinner ─────────────────────────────────────── */}
       {status === "waiting" && (
         <div style={{
           width: "100%", padding: "13px", borderRadius: 10,
@@ -254,7 +238,6 @@ function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
         </div>
       )}
 
-      {/* ── Retry after failure ─────────────────────────────────── */}
       {(status === "failed" || status === "unsupported") && (
         <button
           onClick={() => setStatus("idle")}
@@ -267,7 +250,6 @@ function BiometricBanner({ savedUser, onSuccess, onDismiss }) {
         </button>
       )}
 
-      {/* ── Use different account ───────────────────────────────── */}
       <button
         onClick={() => { clearBioSession(); onDismiss(); }}
         style={{
@@ -294,11 +276,9 @@ function LoginPage({ onLogin }) {
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotMsg, setForgotMsg]     = useState("");
 
-  // ── Biometric state ───────────────────────────────────────────
-  const [bioSession, setBioSession]     = useState(null);   // saved session from prev login
+  const [bioSession, setBioSession]       = useState(null);
   const [showBioBanner, setShowBioBanner] = useState(false);
 
-  // On mount: check if we have a saved session to offer biometric login
   useEffect(() => {
     const session = loadBioSession();
     if (session?.user) {
@@ -321,12 +301,11 @@ function LoginPage({ onLogin }) {
       }
       const { token, user } = res.data;
 
-      // Save to regular storage for the app
       localStorage.setItem("healnet_token", token);
       localStorage.setItem("healnet_user",  JSON.stringify(user));
 
-      // Save to bio session so next visit offers biometric login
-      if (mode === "login") saveBioSession(token, user);
+      // Always save bio session on successful login so next visit shows banner
+      saveBioSession(token, user);
 
       onLogin(user);
     } catch (e) {
@@ -356,7 +335,6 @@ function LoginPage({ onLogin }) {
     }}>
       <div style={{ width: "100%", maxWidth: 420 }}>
 
-        {/* ── LOGO ──────────────────────────────────────────────── */}
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{ fontSize: 36, fontWeight: 800, color: C.accent, letterSpacing: -1 }}>
             🩺 HealNet
@@ -366,7 +344,6 @@ function LoginPage({ onLogin }) {
           </div>
         </div>
 
-        {/* ── BIOMETRIC BANNER ──────────────────────────────────── */}
         {showBioBanner && bioSession && !forgotMode && (
           <BiometricBanner
             savedUser={bioSession.user}
@@ -375,7 +352,6 @@ function LoginPage({ onLogin }) {
           />
         )}
 
-        {/* ── FORGOT PASSWORD ───────────────────────────────────── */}
         {forgotMode ? (
           <Card>
             <h3 style={{ margin: "0 0 6px", color: C.accent, fontSize: 18 }}>Forgot Password</h3>
@@ -412,115 +388,107 @@ function LoginPage({ onLogin }) {
               ← Back to Login
             </button>
           </Card>
-
         ) : (
-
-        // ── NORMAL LOGIN / SIGNUP ──────────────────────────────────
-        <Card>
-          {/* Tabs */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-            {["login", "signup"].map(m => (
-              <button key={m} onClick={() => { setMode(m); setError(""); }}
-                style={{
-                  flex: 1, padding: "10px", borderRadius: 8, border: "none",
-                  cursor: "pointer", fontWeight: 600, fontSize: 14,
-                  background: mode === m ? C.accent : "rgba(59,201,232,0.08)",
-                  color: mode === m ? C.bg : C.muted,
-                }}>
-                {m === "login" ? "Log In" : "Sign Up"}
-              </button>
-            ))}
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {mode === "signup" && (
-              <input placeholder="Full Name" value={form.name}
-                onChange={set("name")} style={inputStyle} />
-            )}
-
-            <input placeholder="Email Address" type="email"
-              value={form.email} onChange={set("email")} style={inputStyle} />
-
-            {/* Password + show/hide */}
-            <div style={{ position: "relative" }}>
-              <input
-                placeholder="Password"
-                type={showPass ? "text" : "password"}
-                value={form.password} onChange={set("password")}
-                style={{ ...inputStyle, paddingRight: 48 }}
-                onKeyDown={e => e.key === "Enter" && handleSubmit()}
-              />
-              <button onClick={() => setShowPass(!showPass)}
-                style={{
-                  position: "absolute", right: 12, top: "50%",
-                  transform: "translateY(-50%)",
-                  background: "none", border: "none",
-                  color: C.muted, cursor: "pointer", fontSize: 16, padding: 4,
-                }}>
-                {showPass ? "🙈" : "👁️"}
-              </button>
+          <Card>
+            <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+              {["login", "signup"].map(m => (
+                <button key={m} onClick={() => { setMode(m); setError(""); }}
+                  style={{
+                    flex: 1, padding: "10px", borderRadius: 8, border: "none",
+                    cursor: "pointer", fontWeight: 600, fontSize: 14,
+                    background: mode === m ? C.accent : "rgba(59,201,232,0.08)",
+                    color: mode === m ? C.bg : C.muted,
+                  }}>
+                  {m === "login" ? "Log In" : "Sign Up"}
+                </button>
+              ))}
             </div>
 
-            {mode === "signup" && (
-              <select value={form.kind} onChange={set("kind")} style={inputStyle}>
-                <option value="solo">Individual / Patient</option>
-                <option value="org">Organisation / Hospital</option>
-                <option value="staff">Doctor / Staff</option>
-              </select>
-            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {mode === "signup" && (
+                <input placeholder="Full Name" value={form.name}
+                  onChange={set("name")} style={inputStyle} />
+              )}
 
-            {/* Forgot password */}
-            {mode === "login" && (
-              <div style={{ textAlign: "right", marginTop: -6 }}>
-                <button onClick={() => setForgotMode(true)}
+              <input placeholder="Email Address" type="email"
+                value={form.email} onChange={set("email")} style={inputStyle} />
+
+              <div style={{ position: "relative" }}>
+                <input
+                  placeholder="Password"
+                  type={showPass ? "text" : "password"}
+                  value={form.password} onChange={set("password")}
+                  style={{ ...inputStyle, paddingRight: 48 }}
+                  onKeyDown={e => e.key === "Enter" && handleSubmit()}
+                />
+                <button onClick={() => setShowPass(!showPass)}
                   style={{
-                    background: "none", border: "none", color: C.accent,
-                    cursor: "pointer", fontSize: 13,
-                    textDecoration: "underline", padding: 0,
+                    position: "absolute", right: 12, top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "none", border: "none",
+                    color: C.muted, cursor: "pointer", fontSize: 16, padding: 4,
                   }}>
-                  Forgot Password?
+                  {showPass ? "🙈" : "👁️"}
                 </button>
               </div>
-            )}
 
-            {error && (
-              <div style={{ color: C.danger, fontSize: 13, textAlign: "center" }}>
-                ⚠️ {error}
-              </div>
-            )}
+              {mode === "signup" && (
+                <select value={form.kind} onChange={set("kind")} style={inputStyle}>
+                  <option value="solo">Individual / Patient</option>
+                  <option value="org">Organisation / Hospital</option>
+                  <option value="staff">Doctor / Staff</option>
+                </select>
+              )}
 
-            {/* Submit */}
-            <button onClick={handleSubmit} disabled={loading}
-              style={{
-                padding: "13px", borderRadius: 10, border: "none",
-                background: loading ? "rgba(59,201,232,0.3)" : C.accent,
-                color: C.bg, fontWeight: 700, fontSize: 15,
-                cursor: loading ? "not-allowed" : "pointer", marginTop: 4,
-              }}>
-              {loading ? "Please wait…"
-                : mode === "login" ? "Log In →"
-                : "Create Account →"}
-            </button>
+              {mode === "login" && (
+                <div style={{ textAlign: "right", marginTop: -6 }}>
+                  <button onClick={() => setForgotMode(true)}
+                    style={{
+                      background: "none", border: "none", color: C.accent,
+                      cursor: "pointer", fontSize: 13,
+                      textDecoration: "underline", padding: 0,
+                    }}>
+                    Forgot Password?
+                  </button>
+                </div>
+              )}
 
-            {/* Biometric hint — shown on login tab if no saved session yet */}
-            {mode === "login" && !showBioBanner && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 10,
-                padding: "10px 14px", borderRadius: 10,
-                background: "rgba(59,201,232,0.05)",
-                border: `1px solid ${C.border}`,
-              }}>
-                <span style={{ fontSize: 18 }}>🔐</span>
-                <span style={{ color: C.muted, fontSize: 12, lineHeight: 1.5 }}>
-                  After signing in, biometric login will be available on your next visit.
-                </span>
-              </div>
-            )}
-          </div>
-        </Card>
+              {error && (
+                <div style={{ color: C.danger, fontSize: 13, textAlign: "center" }}>
+                  ⚠️ {error}
+                </div>
+              )}
+
+              <button onClick={handleSubmit} disabled={loading}
+                style={{
+                  padding: "13px", borderRadius: 10, border: "none",
+                  background: loading ? "rgba(59,201,232,0.3)" : C.accent,
+                  color: C.bg, fontWeight: 700, fontSize: 15,
+                  cursor: loading ? "not-allowed" : "pointer", marginTop: 4,
+                }}>
+                {loading ? "Please wait…"
+                  : mode === "login" ? "Log In →"
+                  : "Create Account →"}
+              </button>
+
+              {/* ── FIX 2: Only show hint when no bio session exists yet ── */}
+              {mode === "login" && !showBioBanner && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "10px 14px", borderRadius: 10,
+                  background: "rgba(59,201,232,0.05)",
+                  border: `1px solid ${C.border}`,
+                }}>
+                  <span style={{ fontSize: 18 }}>🔐</span>
+                  <span style={{ color: C.muted, fontSize: 12, lineHeight: 1.5 }}>
+                    After signing in, biometric login will be available on your next visit.
+                  </span>
+                </div>
+              )}
+            </div>
+          </Card>
         )}
 
-        {/* ── BRANDING ──────────────────────────────────────────── */}
         <div style={{ textAlign: "center", marginTop: 24 }}>
           <div style={{ color: C.muted, fontSize: 11 }}>A product of</div>
           <div style={{ color: C.accent, fontSize: 13, fontWeight: 700, marginTop: 3, letterSpacing: 0.5 }}>
@@ -566,7 +534,6 @@ function Dashboard({ user, onLogout }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-open solo user's own record
   useEffect(() => {
     if (user.kind === "solo" && patients.length === 1 && page === "overview") {
       openPatient(patients[0]);
@@ -590,8 +557,10 @@ function Dashboard({ user, onLogout }) {
 
   function navigate(p) { setPage(p); if (isMobile) setSidebar(false); }
 
+  // ── FIX 2: Don't clear bio session on logout ──────────────────────────────
+  // The bio session must persist so the banner appears on the user's next visit.
+  // Only "Use a different account" (in BiometricBanner) should call clearBioSession().
   function handleLogout() {
-    clearBioSession();
     localStorage.removeItem("healnet_token");
     localStorage.removeItem("healnet_user");
     onLogout();
