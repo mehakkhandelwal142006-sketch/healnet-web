@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  HEALNET  —  App.jsx
-//  Biometric login using PasswordCredential API + device lock screen
-//  Works on: Chrome/Edge (Windows Hello), Safari (Touch ID / Face ID)
-//  No passkey registration needed — no packages required
+//  Real fingerprint login via WebAuthn passkey (Touch ID / Face ID / Windows Hello)
+//  Works on: iPhone Safari, Mac Safari, Chrome, Edge
+//  Requires: auth.py updated with /webauthn/* endpoints
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback } from "react";
 import { authAPI, patientsAPI, vitalsAPI, alertsAPI } from "./services/api";
@@ -13,70 +13,172 @@ import CameraPage     from "./pages/camerapage";
 import SmartWatchPage from "./pages/smartwatch";
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  BIOMETRIC SESSION HELPERS
+//  API BASE  — reads from your existing api service
 // ─────────────────────────────────────────────────────────────────────────────
-const BIO_TOKEN_KEY = "healnet_bio_token";
-const BIO_USER_KEY  = "healnet_bio_user";
+const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
-function saveBioSession(token, user) {
-  localStorage.setItem(BIO_TOKEN_KEY, token);
-  localStorage.setItem(BIO_USER_KEY,  JSON.stringify(user));
+// ─────────────────────────────────────────────────────────────────────────────
+//  WEBAUTHN HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Convert base64url string → Uint8Array (needed by WebAuthn browser API) */
+function b64urlToUint8(str) {
+  const pad = str + "=".repeat((4 - (str.length % 4)) % 4);
+  const bin = atob(pad.replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(bin, c => c.charCodeAt(0));
 }
 
-function loadBioSession() {
+/** Convert ArrayBuffer / Uint8Array → base64url string (needed to send to server) */
+function bufToB64url(buf) {
+  const bytes = new Uint8Array(buf);
+  let str = "";
+  bytes.forEach(b => (str += String.fromCharCode(b)));
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+/** Check if WebAuthn platform authenticator is available on this device */
+async function isPlatformAuthAvailable() {
   try {
-    const token = localStorage.getItem(BIO_TOKEN_KEY);
-    const user  = JSON.parse(localStorage.getItem(BIO_USER_KEY));
-    return (token && user) ? { token, user } : null;
-  } catch { return null; }
-}
-
-function clearBioSession() {
-  localStorage.removeItem(BIO_TOKEN_KEY);
-  localStorage.removeItem(BIO_USER_KEY);
+    if (!window.PublicKeyCredential) return false;
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch { return false; }
 }
 
 /**
- * Save the user's credentials using the browser's Credential Management API.
- * This lets the browser offer autofill AND enables biometric confirmation
- * (Touch ID / Windows Hello) when retrieving credentials later.
+ * REGISTER — Step 1+2
+ * Gets challenge from server, triggers Touch ID / Face ID / Windows Hello,
+ * sends result back to server to save the public key.
  */
-async function saveCredential(email, password) {
-  try {
-    if (!window.PasswordCredential) return;
-    const cred = new PasswordCredential({ id: email, password, name: email });
-    await navigator.credentials.store(cred);
-  } catch (e) {
-    console.log("[HealNet] credential store skipped:", e.name);
+async function registerFingerprint(userId, token) {
+  // Step 1: Get registration options from server
+  const optRes = await fetch(`${API_BASE}/api/auth/webauthn/register/begin`, {
+    method:  "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
+    body: JSON.stringify({ user_id: userId }),
+  });
+  if (!optRes.ok) throw new Error(await optRes.text());
+  const options = await optRes.json();
+
+  // Convert base64url fields to ArrayBuffer (required by browser API)
+  options.challenge = b64urlToUint8(options.challenge);
+  options.user.id   = b64urlToUint8(options.user.id);
+  if (options.excludeCredentials) {
+    options.excludeCredentials = options.excludeCredentials.map(c => ({
+      ...c, id: b64urlToUint8(c.id),
+    }));
   }
+
+  // Step 2: Browser shows Touch ID / Face ID / Windows Hello
+  const credential = await navigator.credentials.create({ publicKey: options });
+
+  // Step 3: Encode response and send to server
+  const credJSON = {
+    id:    credential.id,
+    rawId: bufToB64url(credential.rawId),
+    type:  credential.type,
+    response: {
+      attestationObject: bufToB64url(credential.response.attestationObject),
+      clientDataJSON:    bufToB64url(credential.response.clientDataJSON),
+    },
+  };
+
+  const verRes = await fetch(`${API_BASE}/api/auth/webauthn/register/complete`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ user_id: userId, credential: credJSON }),
+  });
+  if (!verRes.ok) throw new Error(await verRes.text());
+  return await verRes.json();
 }
 
 /**
- * Retrieve saved credentials from the browser.
- * On devices with biometrics (Touch ID, Windows Hello, Face ID), the browser
- * will show the OS biometric prompt before returning the credentials.
- * Returns { id, password } or null.
+ * LOGIN — Step 1+2
+ * Gets challenge from server, triggers biometric prompt,
+ * sends signed result to server which returns a JWT.
  */
-async function getSavedCredential() {
+async function loginWithFingerprint(email) {
+  // Step 1: Get authentication options from server
+  const optRes = await fetch(`${API_BASE}/api/auth/webauthn/login/begin`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ email }),
+  });
+  if (!optRes.ok) {
+    const err = await optRes.json();
+    throw new Error(err.detail || "Failed to begin fingerprint login");
+  }
+  const options = await optRes.json();
+
+  // Convert base64url → ArrayBuffer
+  options.challenge = b64urlToUint8(options.challenge);
+  if (options.allowCredentials) {
+    options.allowCredentials = options.allowCredentials.map(c => ({
+      ...c, id: b64urlToUint8(c.id),
+    }));
+  }
+
+  // Step 2: Browser shows Touch ID / Face ID / Windows Hello
+  const assertion = await navigator.credentials.get({ publicKey: options });
+
+  // Step 3: Encode and send to server
+  const assertJSON = {
+    id:    assertion.id,
+    rawId: bufToB64url(assertion.rawId),
+    type:  assertion.type,
+    response: {
+      authenticatorData: bufToB64url(assertion.response.authenticatorData),
+      clientDataJSON:    bufToB64url(assertion.response.clientDataJSON),
+      signature:         bufToB64url(assertion.response.signature),
+      userHandle:        assertion.response.userHandle
+        ? bufToB64url(assertion.response.userHandle) : null,
+    },
+  };
+
+  const verRes = await fetch(`${API_BASE}/api/auth/webauthn/login/complete`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ email, credential: assertJSON }),
+  });
+  if (!verRes.ok) {
+    const err = await verRes.json();
+    throw new Error(err.detail || "Fingerprint verification failed");
+  }
+  return await verRes.json(); // { token, user }
+}
+
+/** Check if user already has a fingerprint registered on the server */
+async function checkFingerprintRegistered(token) {
   try {
-    if (!window.PasswordCredential) return null;
-    const cred = await navigator.credentials.get({
-      password: true,
-      mediation: "optional",   // shows picker if multiple accounts saved
+    const res = await fetch(`${API_BASE}/api/auth/webauthn/status`, {
+      headers: { "Authorization": `Bearer ${token}` },
     });
-    if (cred && cred.id && cred.password) {
-      return { id: cred.id, password: cred.password };
-    }
-    return null;
-  } catch (e) {
-    console.log("[HealNet] credential get:", e.name);
-    return null;
-  }
+    const data = await res.json();
+    return data.registered === true;
+  } catch { return false; }
 }
 
-/** Check if the Credential Management API is supported */
-function isCredentialAPISupported() {
-  return !!(window.PasswordCredential && navigator.credentials);
+// ─────────────────────────────────────────────────────────────────────────────
+//  LOCAL STORAGE — saved email for fingerprint login screen
+// ─────────────────────────────────────────────────────────────────────────────
+const SAVED_EMAIL_KEY = "healnet_fp_email";
+const SAVED_USER_KEY  = "healnet_fp_user";
+
+function saveFpEmail(email, user) {
+  localStorage.setItem(SAVED_EMAIL_KEY, email);
+  localStorage.setItem(SAVED_USER_KEY,  JSON.stringify(user));
+}
+function loadFpEmail() {
+  return {
+    email: localStorage.getItem(SAVED_EMAIL_KEY),
+    user:  JSON.parse(localStorage.getItem(SAVED_USER_KEY) || "null"),
+  };
+}
+function clearFpEmail() {
+  localStorage.removeItem(SAVED_EMAIL_KEY);
+  localStorage.removeItem(SAVED_USER_KEY);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,9 +196,6 @@ const C = {
   muted:  "rgba(232,244,248,0.5)",
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  RESPONSIVE HOOK
-// ─────────────────────────────────────────────────────────────────────────────
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   useEffect(() => {
@@ -107,9 +206,6 @@ function useIsMobile() {
   return isMobile;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  SHARED UI
-// ─────────────────────────────────────────────────────────────────────────────
 function Card({ children, style = {} }) {
   return (
     <div style={{
@@ -132,9 +228,6 @@ function Badge({ label, color }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  ROLE-BASED PATIENT FILTER
-// ─────────────────────────────────────────────────────────────────────────────
 function filterPatients(all, user) {
   if (user.kind === "solo") {
     const userEmail = (user.email || "").trim().toLowerCase();
@@ -145,47 +238,127 @@ function filterPatients(all, user) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  BIOMETRIC LOGIN SCREEN
-//  Shown on return visits instead of the normal login form
+//  FINGERPRINT SETUP MODAL
+//  Shown once after first password login to register the fingerprint
 // ─────────────────────────────────────────────────────────────────────────────
-function BiometricLoginScreen({ savedUser, onSuccess, onUsePassword, onAutoLogin }) {
-  // status: "idle" | "scanning" | "failed" | "unsupported"
-  const [status, setStatus] = useState("idle");
+function FingerprintSetupModal({ user, token, onDone, onSkip }) {
+  const [status, setStatus] = useState("idle"); // idle | registering | success | failed
+  const [error, setError]   = useState("");
 
-  // Auto-trigger on mount
-  useEffect(() => { handleBiometric(); }, []); // eslint-disable-line
-
-  async function handleBiometric() {
-    setStatus("scanning");
-
-    // ── Strategy 1: Try PasswordCredential API (triggers biometric on
-    //   supported devices — Chrome on Android, Safari on Mac/iOS)
-    if (isCredentialAPISupported()) {
-      const cred = await getSavedCredential();
-      if (cred) {
-        // Got credentials back (browser verified with biometric / lock screen)
-        // Re-authenticate silently using saved email + password
-        onAutoLogin(cred.id, cred.password);
-        return;
-      }
+  async function handleRegister() {
+    setStatus("registering");
+    setError("");
+    try {
+      await registerFingerprint(user.id, token);
+      setStatus("success");
+      setTimeout(onDone, 1400);
+    } catch (e) {
+      console.error(e);
+      setError(e.message || "Registration failed");
+      setStatus("failed");
     }
-
-    // ── Strategy 2: Fallback — just restore the saved session token directly.
-    //   The user is already on the same trusted device that logged in before.
-    const session = loadBioSession();
-    if (session) {
-      localStorage.setItem("healnet_token", session.token);
-      localStorage.setItem("healnet_user",  JSON.stringify(session.user));
-      sessionStorage.setItem("healnet_tab_active", "1");
-      onSuccess(session.user);
-      return;
-    }
-
-    setStatus("failed");
   }
 
-  // Avatar initials
-  const initials = (savedUser.name || "?")
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 300,
+      background: "rgba(3,12,44,0.96)",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      padding: 32, fontFamily: "'Segoe UI', sans-serif",
+      textAlign: "center",
+    }}>
+      <div style={{ fontSize: 64, marginBottom: 20 }}>
+        {status === "success" ? "✅" : status === "failed" ? "❌" : "👆"}
+      </div>
+
+      <div style={{ fontSize: 22, fontWeight: 800, color: C.accent, marginBottom: 10 }}>
+        {status === "success"     ? "Fingerprint Registered!"
+         : status === "registering" ? "Follow the prompt…"
+         : status === "failed"    ? "Registration Failed"
+         : "Enable Fingerprint Login"}
+      </div>
+
+      <div style={{ color: C.muted, fontSize: 14, marginBottom: 32,
+        maxWidth: 320, lineHeight: 1.7 }}>
+        {status === "success"
+          ? "You can now log in with your fingerprint or Face ID next time."
+          : status === "registering"
+          ? "Complete the Touch ID / Face ID / Windows Hello prompt on your device."
+          : status === "failed"
+          ? (error || "Something went wrong. Try again or skip.")
+          : "Set up fingerprint or Face ID for faster, secure login — no password needed next time."}
+      </div>
+
+      {(status === "idle" || status === "failed") && (
+        <>
+          <button onClick={handleRegister} style={{
+            padding: "14px 40px", borderRadius: 12, border: "none",
+            background: `linear-gradient(135deg, ${C.accent}, #0099bb)`,
+            color: C.bg, fontWeight: 700, fontSize: 16,
+            cursor: "pointer", marginBottom: 14,
+            display: "flex", alignItems: "center", gap: 10,
+          }}>
+            <span style={{ fontSize: 22 }}>👆</span>
+            {status === "failed" ? "Try Again" : "Set Up Fingerprint"}
+          </button>
+          <button onClick={onSkip} style={{
+            background: "none", border: "none",
+            color: C.muted, fontSize: 13, cursor: "pointer",
+            textDecoration: "underline", padding: 8,
+          }}>
+            Skip for now
+          </button>
+        </>
+      )}
+
+      {status === "registering" && (
+        <div style={{
+          padding: "14px 40px", borderRadius: 12,
+          background: "rgba(59,201,232,0.1)",
+          border: `1px solid ${C.border}`,
+          color: C.muted, fontSize: 14,
+        }}>
+          Waiting for device confirmation…
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  FINGERPRINT LOGIN SCREEN
+//  Shown on return visits when a saved email + registered fingerprint exists
+// ─────────────────────────────────────────────────────────────────────────────
+function FingerprintLoginScreen({ savedUser, savedEmail, onSuccess, onUsePassword }) {
+  const [status, setStatus] = useState("idle"); // idle|scanning|failed
+  const [error, setError]   = useState("");
+
+  // Auto-trigger on mount
+  useEffect(() => { handleLogin(); }, []); // eslint-disable-line
+
+  async function handleLogin() {
+    setStatus("scanning");
+    setError("");
+    try {
+      const result = await loginWithFingerprint(savedEmail);
+      localStorage.setItem("healnet_token", result.token);
+      localStorage.setItem("healnet_user",  JSON.stringify(result.user));
+      sessionStorage.setItem("healnet_tab_active", "1");
+      onSuccess(result.user);
+    } catch (e) {
+      console.error(e);
+      // User cancelled → go silently back to idle; other errors show message
+      if (e.name === "NotAllowedError" || (e.message || "").includes("cancel")) {
+        setStatus("idle");
+      } else {
+        setError(e.message || "Fingerprint verification failed");
+        setStatus("failed");
+      }
+    }
+  }
+
+  const initials = (savedUser?.name || "?")
     .split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
 
   return (
@@ -196,84 +369,85 @@ function BiometricLoginScreen({ savedUser, onSuccess, onUsePassword, onAutoLogin
       padding: 32, fontFamily: "'Segoe UI', sans-serif",
     }}>
       {/* Logo */}
-      <div style={{ fontSize: 28, fontWeight: 800, color: C.accent, marginBottom: 48 }}>
+      <div style={{ fontSize: 26, fontWeight: 800, color: C.accent, marginBottom: 48 }}>
         🩺 HealNet
       </div>
 
       {/* Avatar */}
       <div style={{
-        width: 80, height: 80, borderRadius: "50%",
+        width: 78, height: 78, borderRadius: "50%",
         background: `linear-gradient(135deg, ${C.accent}33, ${C.accent}66)`,
         border: `2px solid ${C.accent}`,
         display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 28, fontWeight: 800, color: C.accent, marginBottom: 16,
+        fontSize: 28, fontWeight: 800, color: C.accent, marginBottom: 14,
       }}>
         {initials}
       </div>
 
-      <div style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 6 }}>
-        Welcome back, {savedUser.name.split(" ")[0]}!
+      <div style={{ fontSize: 19, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+        Welcome back, {(savedUser?.name || "").split(" ")[0]}!
       </div>
-      <div style={{ fontSize: 13, color: C.muted, marginBottom: 48, textAlign: "center" }}>
-        {status === "scanning"
-          ? "Complete the biometric prompt on your device…"
-          : status === "failed"
-          ? "Verification failed. Try again or use your password."
-          : status === "unsupported"
-          ? "Biometrics not available on this device."
-          : "Verify your identity to continue"}
+      <div style={{ fontSize: 13, color: C.muted, marginBottom: 44, textAlign: "center" }}>
+        {status === "scanning" ? "Complete the biometric prompt on your device…"
+         : status === "failed"  ? (error || "Verification failed")
+         : "Use your fingerprint or Face ID to continue"}
       </div>
 
       {/* Fingerprint icon — pulsing while scanning */}
-      <div style={{
-        fontSize: 72, marginBottom: 40,
-        animation: status === "scanning" ? "pulse 1.2s ease-in-out infinite" : "none",
-        opacity: status === "failed" ? 0.4 : 1,
-        transition: "opacity 0.3s",
-      }}>
-        {status === "failed" || status === "unsupported" ? "❌" : "👆"}
-      </div>
-
       <style>{`
-        @keyframes pulse {
-          0%, 100% { transform: scale(1);   opacity: 1;   }
-          50%       { transform: scale(1.12); opacity: 0.7; }
+        @keyframes fp-pulse {
+          0%,100% { transform: scale(1);    opacity: 1;   }
+          50%      { transform: scale(1.13); opacity: 0.65; }
         }
       `}</style>
+      <div style={{
+        fontSize: 76, marginBottom: 44,
+        animation: status === "scanning" ? "fp-pulse 1.2s ease-in-out infinite" : "none",
+        opacity: status === "failed" ? 0.35 : 1,
+        transition: "opacity 0.3s",
+      }}>
+        {status === "failed" ? "❌" : "👆"}
+      </div>
 
-      {/* Retry button */}
-      {(status === "failed" || status === "idle" || status === "unsupported") && (
-        <button
-          onClick={handleBiometric}
-          style={{
-            padding: "14px 40px", borderRadius: 12, border: "none",
-            background: `linear-gradient(135deg, ${C.accent}, #0099bb)`,
-            color: C.bg, fontWeight: 700, fontSize: 16,
-            cursor: "pointer", marginBottom: 16,
-            display: "flex", alignItems: "center", gap: 10,
-          }}>
+      {/* Action button */}
+      {(status === "idle" || status === "failed") && (
+        <button onClick={handleLogin} style={{
+          padding: "14px 36px", borderRadius: 12, border: "none",
+          background: `linear-gradient(135deg, ${C.accent}, #0099bb)`,
+          color: C.bg, fontWeight: 700, fontSize: 16, cursor: "pointer",
+          marginBottom: 16, display: "flex", alignItems: "center", gap: 10,
+        }}>
           <span style={{ fontSize: 22 }}>👆</span>
           {status === "failed" ? "Try Again" : "Use Fingerprint / Face ID"}
         </button>
       )}
 
-      {/* Use password instead */}
-      <button onClick={onUsePassword}
-        style={{
-          background: "none", border: `1px solid ${C.border}`,
-          color: C.muted, fontSize: 13, cursor: "pointer",
-          borderRadius: 10, padding: "10px 28px", marginBottom: 12,
+      {status === "scanning" && (
+        <div style={{
+          padding: "13px 36px", borderRadius: 12,
+          background: "rgba(59,201,232,0.08)",
+          border: `1px solid ${C.border}`,
+          color: C.muted, fontSize: 14, marginBottom: 16,
         }}>
+          Waiting for device…
+        </div>
+      )}
+
+      {/* Use password instead */}
+      <button onClick={onUsePassword} style={{
+        background: "none", border: `1px solid ${C.border}`,
+        color: C.muted, fontSize: 13, cursor: "pointer",
+        borderRadius: 10, padding: "10px 28px", marginBottom: 12,
+      }}>
         Use password instead
       </button>
 
       {/* Different account */}
-      <button onClick={() => { clearBioSession(); onUsePassword(); }}
-        style={{
-          background: "none", border: "none",
-          color: C.muted, fontSize: 12, cursor: "pointer",
-          textDecoration: "underline", padding: 4,
-        }}>
+      <button onClick={() => { clearFpEmail(); onUsePassword(); }} style={{
+        background: "none", border: "none",
+        color: C.muted, fontSize: 12, cursor: "pointer",
+        textDecoration: "underline", padding: 4,
+      }}>
         Use a different account
       </button>
     </div>
@@ -293,16 +467,25 @@ function LoginPage({ onLogin }) {
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotMsg, setForgotMsg]     = useState("");
 
-  // Biometric state
-  const [bioSession, setBioSession]   = useState(null);
-  const [showBioScreen, setShowBioScreen] = useState(false);
+  // Fingerprint state
+  const [fpAvailable, setFpAvailable]     = useState(false);
+  const [showFpScreen, setShowFpScreen]   = useState(false);
+  const [savedFp, setSavedFp]             = useState({ email: null, user: null });
+  const [showFpSetup, setShowFpSetup]     = useState(false);
+  const [pendingAuth, setPendingAuth]     = useState(null); // { token, user }
 
   useEffect(() => {
-    const session = loadBioSession();
-    if (session?.user) {
-      setBioSession(session);
-      setShowBioScreen(true);
-    }
+    (async () => {
+      const available = await isPlatformAuthAvailable();
+      setFpAvailable(available);
+      if (available) {
+        const { email, user } = loadFpEmail();
+        if (email && user) {
+          setSavedFp({ email, user });
+          setShowFpScreen(true);
+        }
+      }
+    })();
   }, []);
 
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
@@ -323,11 +506,19 @@ function LoginPage({ onLogin }) {
       localStorage.setItem("healnet_user",  JSON.stringify(user));
       sessionStorage.setItem("healnet_tab_active", "1");
 
-      // Save bio session so next visit shows fingerprint screen
-      if (mode === "login") {
-        saveBioSession(token, user);
-        // Save to browser credential store — triggers biometric next time
-        await saveCredential(form.email, form.password);
+      // After login — check if fingerprint is available and not yet registered
+      if (mode === "login" && fpAvailable) {
+        const alreadyRegistered = await checkFingerprintRegistered(token);
+        if (!alreadyRegistered) {
+          // Offer fingerprint setup
+          setPendingAuth({ token, user });
+          setShowFpSetup(true);
+          setLoading(false);
+          return;
+        } else {
+          // Already registered — just save the email for next visit
+          saveFpEmail(form.email, user);
+        }
       }
 
       onLogin(user);
@@ -342,28 +533,32 @@ function LoginPage({ onLogin }) {
     setForgotMsg("✅ If this email is registered, a reset link has been sent. Please contact your admin.");
   }
 
-  // ── Show full-screen biometric login on return visits ─────────
-  if (showBioScreen && bioSession) {
+  // ── Show fingerprint login screen ─────────────────────────────
+  if (showFpScreen && savedFp.email) {
     return (
-      <BiometricLoginScreen
-        savedUser={bioSession.user}
+      <FingerprintLoginScreen
+        savedUser={savedFp.user}
+        savedEmail={savedFp.email}
         onSuccess={onLogin}
-        onUsePassword={() => setShowBioScreen(false)}
-        onAutoLogin={async (email, password) => {
-          // Re-authenticate with saved credentials in the background
-          try {
-            const res = await authAPI.login(email, password);
-            const { token, user } = res.data;
-            localStorage.setItem("healnet_token", token);
-            localStorage.setItem("healnet_user",  JSON.stringify(user));
-            sessionStorage.setItem("healnet_tab_active", "1");
-            saveBioSession(token, user);
-            onLogin(user);
-          } catch {
-            // Token expired or password changed — fall back to password login
-            clearBioSession();
-            setShowBioScreen(false);
-          }
+        onUsePassword={() => setShowFpScreen(false)}
+      />
+    );
+  }
+
+  // ── Show fingerprint setup modal ──────────────────────────────
+  if (showFpSetup && pendingAuth) {
+    return (
+      <FingerprintSetupModal
+        user={pendingAuth.user}
+        token={pendingAuth.token}
+        onDone={() => {
+          saveFpEmail(form.email, pendingAuth.user);
+          setShowFpSetup(false);
+          onLogin(pendingAuth.user);
+        }}
+        onSkip={() => {
+          setShowFpSetup(false);
+          onLogin(pendingAuth.user);
         }}
       />
     );
@@ -402,11 +597,9 @@ function LoginPage({ onLogin }) {
             <p style={{ color: C.muted, fontSize: 13, marginBottom: 20 }}>
               Enter your registered email and we'll help you reset your password.
             </p>
-            <input
-              placeholder="Email Address" type="email"
+            <input placeholder="Email Address" type="email"
               value={forgotEmail} onChange={e => setForgotEmail(e.target.value)}
-              style={{ ...inputStyle, marginBottom: 14 }}
-            />
+              style={{ ...inputStyle, marginBottom: 14 }} />
             {forgotMsg && (
               <div style={{
                 color: forgotMsg.startsWith("✅") ? C.accent2 : C.danger,
@@ -415,12 +608,11 @@ function LoginPage({ onLogin }) {
                 {forgotMsg}
               </div>
             )}
-            <button onClick={handleForgot}
-              style={{
-                width: "100%", padding: "12px", borderRadius: 10, border: "none",
-                background: C.accent, color: C.bg, fontWeight: 700,
-                fontSize: 15, cursor: "pointer", marginBottom: 12,
-              }}>
+            <button onClick={handleForgot} style={{
+              width: "100%", padding: "12px", borderRadius: 10, border: "none",
+              background: C.accent, color: C.bg, fontWeight: 700,
+              fontSize: 15, cursor: "pointer", marginBottom: 12,
+            }}>
               Send Reset Link
             </button>
             <button onClick={() => { setForgotMode(false); setForgotMsg(""); setForgotEmail(""); }}
@@ -432,111 +624,104 @@ function LoginPage({ onLogin }) {
               ← Back to Login
             </button>
           </Card>
-
         ) : (
+          <Card>
+            {/* Tabs */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+              {["login", "signup"].map(m => (
+                <button key={m} onClick={() => { setMode(m); setError(""); }}
+                  style={{
+                    flex: 1, padding: "10px", borderRadius: 8, border: "none",
+                    cursor: "pointer", fontWeight: 600, fontSize: 14,
+                    background: mode === m ? C.accent : "rgba(59,201,232,0.08)",
+                    color: mode === m ? C.bg : C.muted,
+                  }}>
+                  {m === "login" ? "Log In" : "Sign Up"}
+                </button>
+              ))}
+            </div>
 
-        // Normal login / signup
-        <Card>
-          <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-            {["login", "signup"].map(m => (
-              <button key={m} onClick={() => { setMode(m); setError(""); }}
-                style={{
-                  flex: 1, padding: "10px", borderRadius: 8, border: "none",
-                  cursor: "pointer", fontWeight: 600, fontSize: 14,
-                  background: mode === m ? C.accent : "rgba(59,201,232,0.08)",
-                  color: mode === m ? C.bg : C.muted,
-                }}>
-                {m === "login" ? "Log In" : "Sign Up"}
-              </button>
-            ))}
-          </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {mode === "signup" && (
+                <input placeholder="Full Name" value={form.name}
+                  onChange={set("name")} style={inputStyle} />
+              )}
+              <input placeholder="Email Address" type="email"
+                value={form.email} onChange={set("email")} style={inputStyle} />
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {mode === "signup" && (
-              <input placeholder="Full Name" value={form.name}
-                onChange={set("name")} style={inputStyle} />
-            )}
-
-            <input placeholder="Email Address" type="email"
-              value={form.email} onChange={set("email")} style={inputStyle} />
-
-            <div style={{ position: "relative" }}>
-              <input
-                placeholder="Password"
-                type={showPass ? "text" : "password"}
-                value={form.password} onChange={set("password")}
-                style={{ ...inputStyle, paddingRight: 48 }}
-                onKeyDown={e => e.key === "Enter" && handleSubmit()}
-              />
-              <button onClick={() => setShowPass(!showPass)}
-                style={{
+              <div style={{ position: "relative" }}>
+                <input
+                  placeholder="Password"
+                  type={showPass ? "text" : "password"}
+                  value={form.password} onChange={set("password")}
+                  style={{ ...inputStyle, paddingRight: 48 }}
+                  onKeyDown={e => e.key === "Enter" && handleSubmit()}
+                />
+                <button onClick={() => setShowPass(!showPass)} style={{
                   position: "absolute", right: 12, top: "50%",
                   transform: "translateY(-50%)",
                   background: "none", border: "none",
                   color: C.muted, cursor: "pointer", fontSize: 16, padding: 4,
                 }}>
-                {showPass ? "🙈" : "👁️"}
-              </button>
-            </div>
+                  {showPass ? "🙈" : "👁️"}
+                </button>
+              </div>
 
-            {mode === "signup" && (
-              <select value={form.kind} onChange={set("kind")} style={inputStyle}>
-                <option value="solo">Individual / Patient</option>
-                <option value="org">Organisation / Hospital</option>
-                <option value="staff">Doctor / Staff</option>
-              </select>
-            )}
+              {mode === "signup" && (
+                <select value={form.kind} onChange={set("kind")} style={inputStyle}>
+                  <option value="solo">Individual / Patient</option>
+                  <option value="org">Organisation / Hospital</option>
+                  <option value="staff">Doctor / Staff</option>
+                </select>
+              )}
 
-            {mode === "login" && (
-              <div style={{ textAlign: "right", marginTop: -6 }}>
-                <button onClick={() => setForgotMode(true)}
-                  style={{
+              {mode === "login" && (
+                <div style={{ textAlign: "right", marginTop: -6 }}>
+                  <button onClick={() => setForgotMode(true)} style={{
                     background: "none", border: "none", color: C.accent,
                     cursor: "pointer", fontSize: 13,
                     textDecoration: "underline", padding: 0,
                   }}>
-                  Forgot Password?
-                </button>
-              </div>
-            )}
+                    Forgot Password?
+                  </button>
+                </div>
+              )}
 
-            {error && (
-              <div style={{ color: C.danger, fontSize: 13, textAlign: "center" }}>
-                ⚠️ {error}
-              </div>
-            )}
+              {error && (
+                <div style={{ color: C.danger, fontSize: 13, textAlign: "center" }}>
+                  ⚠️ {error}
+                </div>
+              )}
 
-            <button onClick={handleSubmit} disabled={loading}
-              style={{
+              <button onClick={handleSubmit} disabled={loading} style={{
                 padding: "13px", borderRadius: 10, border: "none",
                 background: loading ? "rgba(59,201,232,0.3)" : C.accent,
                 color: C.bg, fontWeight: 700, fontSize: 15,
                 cursor: loading ? "not-allowed" : "pointer", marginTop: 4,
               }}>
-              {loading ? "Please wait…"
-                : mode === "login" ? "Log In →"
-                : "Create Account →"}
-            </button>
+                {loading ? "Please wait…"
+                  : mode === "login" ? "Log In →"
+                  : "Create Account →"}
+              </button>
 
-            {/* Fingerprint hint — only on login tab */}
-            {mode === "login" && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 10,
-                padding: "11px 14px", borderRadius: 10,
-                background: "rgba(59,201,232,0.05)",
-                border: `1px solid ${C.border}`,
-              }}>
-                <span style={{ fontSize: 22 }}>👆</span>
-                <span style={{ color: C.muted, fontSize: 12, lineHeight: 1.5 }}>
-                  Sign in once and fingerprint / Face ID login will be enabled automatically on your next visit.
-                </span>
-              </div>
-            )}
-          </div>
-        </Card>
+              {/* Fingerprint hint */}
+              {mode === "login" && fpAvailable && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "11px 14px", borderRadius: 10,
+                  background: "rgba(59,201,232,0.05)",
+                  border: `1px solid ${C.border}`,
+                }}>
+                  <span style={{ fontSize: 22 }}>👆</span>
+                  <span style={{ color: C.muted, fontSize: 12, lineHeight: 1.5 }}>
+                    Sign in once and you'll be prompted to set up fingerprint / Face ID for future logins.
+                  </span>
+                </div>
+              )}
+            </div>
+          </Card>
         )}
 
-        {/* Branding */}
         <div style={{ textAlign: "center", marginTop: 24 }}>
           <div style={{ color: C.muted, fontSize: 11 }}>A product of</div>
           <div style={{ color: C.accent, fontSize: 13, fontWeight: 700, marginTop: 3, letterSpacing: 0.5 }}>
@@ -544,14 +729,13 @@ function LoginPage({ onLogin }) {
           </div>
           <div style={{ color: C.muted, fontSize: 10, marginTop: 4 }}>© 2024 All rights reserved</div>
         </div>
-
       </div>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  DASHBOARD
+//  DASHBOARD  (unchanged from your working version)
 // ─────────────────────────────────────────────────────────────────────────────
 function Dashboard({ user, onLogout }) {
   const isMobile = useIsMobile();
@@ -606,8 +790,7 @@ function Dashboard({ user, onLogout }) {
   function navigate(p) { setPage(p); if (isMobile) setSidebar(false); }
 
   function handleLogout() {
-    // Keep bio session so fingerprint screen shows on next visit
-    // Only "Use a different account" clears it
+    // Keep fp email so fingerprint screen shows on next visit
     sessionStorage.removeItem("healnet_tab_active");
     localStorage.removeItem("healnet_token");
     localStorage.removeItem("healnet_user");
@@ -621,9 +804,7 @@ function Dashboard({ user, onLogout }) {
 
   const navItems = [
     { id: "overview",   label: "Overview",        icon: "📊" },
-    ...(user.kind !== "solo"
-      ? [{ id: "patients", label: "Patients", icon: "👥" }]
-      : []),
+    ...(user.kind !== "solo" ? [{ id: "patients", label: "Patients", icon: "👥" }] : []),
     { id: "alerts",     label: "Alerts",          icon: "🚨" },
     { id: "vitals",     label: "Add Vitals",      icon: "💓" },
     { id: "ai",         label: "AI Insights",     icon: "🤖" },
@@ -662,16 +843,15 @@ function Dashboard({ user, onLogout }) {
       )}
       <nav style={{ padding: isMobile ? "8px 0" : "16px 12px", flex: 1 }}>
         {navItems.map(n => (
-          <button key={n.id} onClick={() => navigate(n.id)}
-            style={{
-              width: "100%", padding: "11px 14px", borderRadius: 10, border: "none",
-              background: page === n.id ? `${C.accent}22` : "transparent",
-              color: page === n.id ? C.accent : C.muted,
-              textAlign: "left", cursor: "pointer",
-              fontSize: 14, fontWeight: 600, marginBottom: 4,
-              display: "flex", alignItems: "center", gap: 10,
-              borderLeft: page === n.id ? `3px solid ${C.accent}` : "3px solid transparent",
-            }}>
+          <button key={n.id} onClick={() => navigate(n.id)} style={{
+            width: "100%", padding: "11px 14px", borderRadius: 10, border: "none",
+            background: page === n.id ? `${C.accent}22` : "transparent",
+            color: page === n.id ? C.accent : C.muted,
+            textAlign: "left", cursor: "pointer",
+            fontSize: 14, fontWeight: 600, marginBottom: 4,
+            display: "flex", alignItems: "center", gap: 10,
+            borderLeft: page === n.id ? `3px solid ${C.accent}` : "3px solid transparent",
+          }}>
             {n.icon} {n.label}
             {n.id === "alerts" && stats?.unacknowledged > 0 && (
               <span style={{
@@ -688,12 +868,11 @@ function Dashboard({ user, onLogout }) {
       <div style={{ padding: isMobile ? "12px 14px" : "16px 20px", borderTop: `1px solid ${C.border}` }}>
         <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{user.name}</div>
         <div style={{ fontSize: 11, color: C.muted, marginBottom: 10, textTransform: "capitalize" }}>{user.kind}</div>
-        <button onClick={handleLogout}
-          style={{
-            width: "100%", padding: "8px", borderRadius: 8,
-            background: "rgba(255,77,109,0.12)", border: `1px solid ${C.danger}44`,
-            color: C.danger, cursor: "pointer", fontSize: 13, fontWeight: 600,
-          }}>
+        <button onClick={handleLogout} style={{
+          width: "100%", padding: "8px", borderRadius: 8,
+          background: "rgba(255,77,109,0.12)", border: `1px solid ${C.danger}44`,
+          color: C.danger, cursor: "pointer", fontSize: 13, fontWeight: 600,
+        }}>
           Log Out
         </button>
       </div>
@@ -714,25 +893,22 @@ function Dashboard({ user, onLogout }) {
           position: "sticky", top: 0, zIndex: 100,
         }}>
           <div style={{ fontSize: 18, fontWeight: 800, color: C.accent }}>🩺 HealNet</div>
-          <button onClick={() => setSidebar(!sidebarOpen)}
-            style={{
-              background: "none", border: `1px solid ${C.border}`,
-              color: C.text, padding: "6px 12px", borderRadius: 8,
-              cursor: "pointer", fontSize: 18,
-            }}>
+          <button onClick={() => setSidebar(!sidebarOpen)} style={{
+            background: "none", border: `1px solid ${C.border}`,
+            color: C.text, padding: "6px 12px", borderRadius: 8,
+            cursor: "pointer", fontSize: 18,
+          }}>
             {sidebarOpen ? "✕" : "☰"}
           </button>
         </div>
       )}
-
       {!isMobile && <Sidebar />}
       {isMobile && sidebarOpen && <Sidebar />}
       {isMobile && sidebarOpen && (
-        <div onClick={() => setSidebar(false)}
-          style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
-            zIndex: 98, top: 56,
-          }} />
+        <div onClick={() => setSidebar(false)} style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+          zIndex: 98, top: 56,
+        }} />
       )}
 
       <div style={{ flex: 1, padding: isMobile ? "16px" : "32px", overflowY: "auto" }}>
@@ -768,12 +944,11 @@ function Dashboard({ user, onLogout }) {
                 <Card>
                   <h3 style={{ margin: "0 0 16px", color: C.accent, fontSize: 16 }}>Recent Patients</h3>
                   {patients.slice(0, 5).map(p => (
-                    <div key={p.patient_id} onClick={() => openPatient(p)}
-                      style={{
-                        display: "flex", justifyContent: "space-between",
-                        alignItems: "center", padding: "12px 0",
-                        borderBottom: `1px solid ${C.border}`, cursor: "pointer",
-                      }}>
+                    <div key={p.patient_id} onClick={() => openPatient(p)} style={{
+                      display: "flex", justifyContent: "space-between",
+                      alignItems: "center", padding: "12px 0",
+                      borderBottom: `1px solid ${C.border}`, cursor: "pointer",
+                    }}>
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
                         <div style={{ color: C.muted, fontSize: 11 }}>
@@ -818,15 +993,12 @@ function Dashboard({ user, onLogout }) {
                           <td style={{ padding: "11px 10px", color: C.muted }}>{p.age}</td>
                           <td style={{ padding: "11px 10px" }}><Badge label={p.blood_group || "?"} color={C.accent} /></td>
                           <td style={{ padding: "11px 10px" }}>
-                            <button onClick={() => openPatient(p)}
-                              style={{
-                                padding: "5px 12px", borderRadius: 6,
-                                border: `1px solid ${C.accent}`,
-                                background: "transparent", color: C.accent,
-                                cursor: "pointer", fontSize: 12,
-                              }}>
-                              View
-                            </button>
+                            <button onClick={() => openPatient(p)} style={{
+                              padding: "5px 12px", borderRadius: 6,
+                              border: `1px solid ${C.accent}`,
+                              background: "transparent", color: C.accent,
+                              cursor: "pointer", fontSize: 12,
+                            }}>View</button>
                           </td>
                         </tr>
                       ))}
@@ -845,20 +1017,11 @@ function Dashboard({ user, onLogout }) {
                   style={{ background: "none", border: "none", color: C.accent, cursor: "pointer", fontSize: 14, marginBottom: 16 }}>
                   ← Back
                 </button>
-                <div style={{
-                  display: "grid",
-                  gridTemplateColumns: isMobile ? "1fr" : "1fr 2fr",
-                  gap: 16, marginBottom: 16,
-                }}>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 2fr", gap: 16, marginBottom: 16 }}>
                   <Card>
                     <h3 style={{ margin: "0 0 14px", color: C.accent, fontSize: 15 }}>Patient Info</h3>
-                    {[
-                      ["ID",      selPatient.patient_id],
-                      ["Name",    selPatient.name],
-                      ["Age",     selPatient.age],
-                      ["Gender",  selPatient.gender],
-                      ["Blood",   selPatient.blood_group],
-                      ["Contact", selPatient.contact],
+                    {[["ID",selPatient.patient_id],["Name",selPatient.name],["Age",selPatient.age],
+                      ["Gender",selPatient.gender],["Blood",selPatient.blood_group],["Contact",selPatient.contact],
                     ].map(([k, v]) => v ? (
                       <div key={k} style={{ marginBottom: 8 }}>
                         <div style={{ color: C.muted, fontSize: 10 }}>{k.toUpperCase()}</div>
@@ -886,10 +1049,10 @@ function Dashboard({ user, onLogout }) {
                           return (
                             <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, marginTop: 12 }}>
                               {[
-                                ["❤️ HR",   last.heart_rate,   "bpm"],
-                                ["🫁 SpO2", last.spo2,         "%"],
-                                ["🌡️ Temp", last.temperature,  "°C"],
-                                ["💉 BP",   last.systolic_bp ? `${last.systolic_bp}/${last.diastolic_bp}` : null, "mmHg"],
+                                ["❤️ HR", last.heart_rate, "bpm"],
+                                ["🫁 SpO2", last.spo2, "%"],
+                                ["🌡️ Temp", last.temperature, "°C"],
+                                ["💉 BP", last.systolic_bp ? `${last.systolic_bp}/${last.diastolic_bp}` : null, "mmHg"],
                               ].map(([label, val, unit]) => val ? (
                                 <div key={label} style={{ background: "rgba(59,201,232,0.07)", borderRadius: 8, padding: 10, textAlign: "center" }}>
                                   <div style={{ fontSize: 10, color: C.muted }}>{label}</div>
@@ -907,9 +1070,7 @@ function Dashboard({ user, onLogout }) {
                   </Card>
                 </div>
                 <AddVitalForm patientId={selPatient.patient_id} onAdded={() => openPatient(selPatient)} />
-                <div style={{ marginTop: 16 }}>
-                  <AIPanel patientId={selPatient.patient_id} />
-                </div>
+                <div style={{ marginTop: 16 }}><AIPanel patientId={selPatient.patient_id} /></div>
               </div>
             )}
 
@@ -931,15 +1092,12 @@ function Dashboard({ user, onLogout }) {
                           </div>
                         </div>
                         {!a.acknowledged && (
-                          <button onClick={() => ackAlert(a.id)}
-                            style={{
-                              padding: "6px 12px", borderRadius: 8,
-                              border: `1px solid ${C.accent2}`,
-                              background: "transparent", color: C.accent2,
-                              cursor: "pointer", fontSize: 12, whiteSpace: "nowrap",
-                            }}>
-                            ✓ Ack
-                          </button>
+                          <button onClick={() => ackAlert(a.id)} style={{
+                            padding: "6px 12px", borderRadius: 8,
+                            border: `1px solid ${C.accent2}`,
+                            background: "transparent", color: C.accent2,
+                            cursor: "pointer", fontSize: 12, whiteSpace: "nowrap",
+                          }}>✓ Ack</button>
                         )}
                       </div>
                     </Card>
@@ -956,17 +1114,14 @@ function Dashboard({ user, onLogout }) {
             {page === "vitals" && (
               <div>
                 <h2 style={{ margin: "0 0 20px", fontSize: isMobile ? 20 : 24 }}>Record Vitals</h2>
-                <Card>
-                  <QuickVitalForm patients={patients} onAdded={load} isMobile={isMobile} />
-                </Card>
+                <Card><QuickVitalForm patients={patients} onAdded={load} isMobile={isMobile} /></Card>
               </div>
             )}
 
             {page === "ai" && (
               <div>
                 <h2 style={{ margin: "0 0 20px", fontSize: isMobile ? 20 : 24 }}>🤖 AI Insights</h2>
-                <select
-                  onChange={e => setSelPatient(patients.find(p => p.patient_id === e.target.value) || null)}
+                <select onChange={e => setSelPatient(patients.find(p => p.patient_id === e.target.value) || null)}
                   style={{ ...inputStyle, marginBottom: 20 }}>
                   <option value="">— Select a patient —</option>
                   {patients.map(p => (
@@ -1020,13 +1175,10 @@ function AddPatientForm({ onAdded }) {
   };
 
   if (!open) return (
-    <button onClick={() => setOpen(true)}
-      style={{
-        padding: "10px 16px", borderRadius: 10, border: "none",
-        background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer", fontSize: 13,
-      }}>
-      + Add Patient
-    </button>
+    <button onClick={() => setOpen(true)} style={{
+      padding: "10px 16px", borderRadius: 10, border: "none",
+      background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer", fontSize: 13,
+    }}>+ Add Patient</button>
   );
 
   return (
@@ -1042,13 +1194,9 @@ function AddPatientForm({ onAdded }) {
       }}>
         <h3 style={{ margin: "0 0 20px", color: C.accent }}>New Patient</h3>
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
-          {[
-            ["patient_id","Patient ID *","text"],
-            ["name",      "Full Name *", "text"],
-            ["age",       "Age",         "number"],
-            ["contact",   "Contact",     "text"],
-            ["email",     "Email",       "email"],
-            ["blood_group","Blood Group","text"],
+          {[["patient_id","Patient ID *","text"],["name","Full Name *","text"],
+            ["age","Age","number"],["contact","Contact","text"],
+            ["email","Email","email"],["blood_group","Blood Group","text"],
           ].map(([k, ph, t]) => (
             <input key={k} placeholder={ph} type={t} value={form[k]} onChange={set(k)} style={inputS} />
           ))}
@@ -1058,14 +1206,14 @@ function AddPatientForm({ onAdded }) {
         </div>
         {msg && <div style={{ color: C.danger, fontSize: 13, marginTop: 10 }}>{msg}</div>}
         <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-          <button onClick={save} disabled={loading}
-            style={{ flex: 1, padding: "11px", borderRadius: 8, border: "none", background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer" }}>
-            {loading ? "Saving..." : "Save Patient"}
-          </button>
-          <button onClick={() => setOpen(false)}
-            style={{ flex: 1, padding: "11px", borderRadius: 8, border: `1px solid ${C.border}`, background: "none", color: C.muted, cursor: "pointer" }}>
-            Cancel
-          </button>
+          <button onClick={save} disabled={loading} style={{
+            flex: 1, padding: "11px", borderRadius: 8, border: "none",
+            background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer",
+          }}>{loading ? "Saving..." : "Save Patient"}</button>
+          <button onClick={() => setOpen(false)} style={{
+            flex: 1, padding: "11px", borderRadius: 8,
+            border: `1px solid ${C.border}`, background: "none", color: C.muted, cursor: "pointer",
+          }}>Cancel</button>
         </div>
       </div>
     </div>
@@ -1102,13 +1250,8 @@ function AddVitalForm({ patientId, onAdded }) {
     <Card>
       <h3 style={{ margin: "0 0 14px", color: C.accent, fontSize: 15 }}>Record Vitals</h3>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3,1fr)", gap: 10 }}>
-        {[
-          ["heart_rate",  "Heart Rate (bpm)"],
-          ["spo2",        "SpO2 (%)"],
-          ["systolic_bp", "Systolic BP"],
-          ["diastolic_bp","Diastolic BP"],
-          ["temperature", "Temp (°C)"],
-          ["blood_sugar", "Blood Sugar"],
+        {[["heart_rate","Heart Rate (bpm)"],["spo2","SpO2 (%)"],["systolic_bp","Systolic BP"],
+          ["diastolic_bp","Diastolic BP"],["temperature","Temp (°C)"],["blood_sugar","Blood Sugar"],
         ].map(([k, ph]) => (
           <div key={k}>
             <div style={{ color: C.muted, fontSize: 10, marginBottom: 4 }}>{ph}</div>
@@ -1117,10 +1260,10 @@ function AddVitalForm({ patientId, onAdded }) {
         ))}
       </div>
       {msg && <div style={{ marginTop: 10, fontSize: 13, color: msg.startsWith("✅") ? C.accent2 : C.danger }}>{msg}</div>}
-      <button onClick={save} disabled={loading}
-        style={{ marginTop: 14, padding: "11px 28px", borderRadius: 8, border: "none", background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer", width: "100%" }}>
-        {loading ? "Saving..." : "Save Vitals"}
-      </button>
+      <button onClick={save} disabled={loading} style={{
+        marginTop: 14, padding: "11px 28px", borderRadius: 8, border: "none",
+        background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer", width: "100%",
+      }}>{loading ? "Saving..." : "Save Vitals"}</button>
     </Card>
   );
 }
@@ -1159,13 +1302,8 @@ function QuickVitalForm({ patients, onAdded, isMobile }) {
         {patients.map(p => <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>)}
       </select>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3,1fr)", gap: 10 }}>
-        {[
-          ["heart_rate",  "Heart Rate (bpm)"],
-          ["spo2",        "SpO2 (%)"],
-          ["systolic_bp", "Systolic BP"],
-          ["diastolic_bp","Diastolic BP"],
-          ["temperature", "Temp (°C)"],
-          ["blood_sugar", "Blood Sugar"],
+        {[["heart_rate","Heart Rate (bpm)"],["spo2","SpO2 (%)"],["systolic_bp","Systolic BP"],
+          ["diastolic_bp","Diastolic BP"],["temperature","Temp (°C)"],["blood_sugar","Blood Sugar"],
         ].map(([k, ph]) => (
           <div key={k}>
             <div style={{ color: C.muted, fontSize: 10, marginBottom: 4 }}>{ph}</div>
@@ -1174,10 +1312,10 @@ function QuickVitalForm({ patients, onAdded, isMobile }) {
         ))}
       </div>
       {msg && <div style={{ marginTop: 10, fontSize: 13, color: msg.startsWith("✅") ? C.accent2 : C.danger }}>{msg}</div>}
-      <button onClick={save} disabled={loading}
-        style={{ marginTop: 14, padding: "11px 28px", borderRadius: 8, border: "none", background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer", width: "100%" }}>
-        {loading ? "Saving..." : "Save Vitals"}
-      </button>
+      <button onClick={save} disabled={loading} style={{
+        marginTop: 14, padding: "11px 28px", borderRadius: 8, border: "none",
+        background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer", width: "100%",
+      }}>{loading ? "Saving..." : "Save Vitals"}</button>
     </div>
   );
 }
@@ -1195,9 +1333,6 @@ export default function App() {
 
   if (!user) return <LoginPage onLogin={u => setUser(u)} />;
   return (
-    <Dashboard
-      user={user}
-      onLogout={() => setUser(null)}
-    />
+    <Dashboard user={user} onLogout={() => setUser(null)} />
   );
 }
