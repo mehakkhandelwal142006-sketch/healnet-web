@@ -1,9 +1,8 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || "http://localhost:8000/api",
+  baseURL: "https://healnet-web-production.up.railway.app/api",
 });
-
 // ── Auto-attach token to every request ───────────────────────────
 API.interceptors.request.use((config) => {
   const token = localStorage.getItem("healnet_token");
