@@ -5,6 +5,10 @@ import AIPanel    from "./pages/AIPanel";
 import PupilPage  from "./pages/PupilPage";
 import CameraPage from "./pages/CameraPage";
 
+import { useNetwork }     from "./offline/useNetwork";
+import { OfflineBanner }  from "./offline/OfflineBanner";
+import { cachePatients, getCachedPatients } from "./offline/offlineStore";
+
 // ── THEME ─────────────────────────────────────────────────────────
 const C = {
   bg:     "#030c2c",
@@ -163,7 +167,7 @@ function LoginPage({ onLogin }) {
 // ═══════════════════════════════════════════════════════════════════
 //  DASHBOARD
 // ═══════════════════════════════════════════════════════════════════
-function Dashboard({ user, onLogout }) {
+function Dashboard({ user, onLogout, network }) {
   const [page, setPage]         = useState("overview");
   const [patients, setPatients] = useState([]);
   const [alerts, setAlerts]     = useState([]);
@@ -182,13 +186,27 @@ function Dashboard({ user, onLogout }) {
         alertsAPI.stats(),
       ]);
       setPatients(pRes.data);
+      cachePatients(pRes.data); // ← save for offline use
       setAlerts(aRes.data);
       setStats(sRes.data);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      // Offline fallback: load patients from cache so the app doesn't sit empty
+      const cached = getCachedPatients();
+      if (cached.length) setPatients(cached);
+    }
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // When the network comes back online and a sync completes, refresh data
+  useEffect(() => {
+    if (network.isOnline && !network.syncing) {
+      load();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [network.isOnline, network.syncing]);
 
   async function openPatient(p) {
     setSelPatient(p);
@@ -339,7 +357,7 @@ function Dashboard({ user, onLogout }) {
               <div>
                 <div style={css({ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 })}>
                   <h2 style={css({ margin: 0, fontSize: 24 })}>Patients</h2>
-                  <AddPatientForm onAdded={load} />
+                  <AddPatientForm onAdded={load} disabled={!network.isOnline} />
                 </div>
                 <input
                   placeholder="🔍  Search by name or ID..."
@@ -558,7 +576,7 @@ function Dashboard({ user, onLogout }) {
 // ═══════════════════════════════════════════════════════════════════
 //  FORMS
 // ═══════════════════════════════════════════════════════════════════
-function AddPatientForm({ onAdded }) {
+function AddPatientForm({ onAdded, disabled }) {
   const [open, setOpen]       = useState(false);
   const [form, setForm]       = useState({ patient_id:"", name:"", age:"", gender:"Male", blood_group:"", contact:"", email:"" });
   const [loading, setLoading] = useState(false);
@@ -588,12 +606,15 @@ function AddPatientForm({ onAdded }) {
   });
 
   if (!open) return (
-    <button onClick={() => setOpen(true)}
+    <button onClick={() => !disabled && setOpen(true)} disabled={disabled}
+      title={disabled ? "Adding patients requires an internet connection" : undefined}
       style={css({
         padding: "10px 20px", borderRadius: 10, border: "none",
-        background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer",
+        background: disabled ? "rgba(59,201,232,0.3)" : C.accent,
+        color: C.bg, fontWeight: 700,
+        cursor: disabled ? "not-allowed" : "pointer",
       })}>
-      + Add Patient
+      {disabled ? "📵 Offline" : "+ Add Patient"}
     </button>
   );
 
@@ -760,6 +781,8 @@ export default function App() {
     catch { return null; }
   });
 
+  const network = useNetwork();
+
   function handleLogin(u)  { setUser(u); }
   function handleLogout()  {
     localStorage.removeItem("healnet_token");
@@ -767,6 +790,13 @@ export default function App() {
     setUser(null);
   }
 
-  if (!user) return <LoginPage onLogin={handleLogin} />;
-  return <Dashboard user={user} onLogout={handleLogout} />;
+  return (
+    <>
+      <OfflineBanner {...network} onSync={network.syncNow} />
+      {!user
+        ? <LoginPage onLogin={handleLogin} />
+        : <Dashboard user={user} onLogout={handleLogout} network={network} />
+      }
+    </>
+  );
 }
