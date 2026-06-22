@@ -1,5 +1,8 @@
 import { useState, useEffect } from "react";
 import { aiAPI } from "../services/api";
+import { useNetwork } from "../offline/useNetwork";
+import { cacheAIResult, getCachedAIResult } from "../offline/offlineStore";
+import { OfflineDataBadge } from "../offline/OfflineBanner";
 
 const C = {
   bg: "#030c2c", card: "#04163c", border: "rgba(59,201,232,0.18)",
@@ -107,18 +110,44 @@ export default function AIPanel({ patientId }) {
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState("");
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
+
+  const { isOnline } = useNetwork();
+  const offline = !isOnline;
 
   useEffect(() => {
     if (patientId) fetchAI();
   }, [patientId]);
 
+  // When going back online, refresh if we were showing cached data
+  useEffect(() => {
+    if (!offline && fromCache && patientId) fetchAI();
+  }, [offline]);
+
   async function fetchAI() {
-    setLoading(true); setError("");
+    // If offline, try cache first
+    if (offline || !navigator.onLine) {
+      const cached = getCachedAIResult(patientId);
+      if (cached) { setData(cached); setFromCache(true); return; }
+      setError("You're offline and no cached AI analysis is available for this patient.");
+      return;
+    }
+
+    setLoading(true); setError(""); setFromCache(false);
     try {
       const res = await aiAPI.analyze(patientId);
       setData(res.data);
+      // Cache for offline use
+      cacheAIResult(patientId, res.data);
     } catch (e) {
-      setError(e.response?.data?.detail || "Could not load AI analysis");
+      // Network failed mid-request — fall back to cache
+      const cached = getCachedAIResult(patientId);
+      if (cached) {
+        setData(cached);
+        setFromCache(true);
+      } else {
+        setError(e.response?.data?.detail || "Could not load AI analysis");
+      }
     }
     setLoading(false);
   }
@@ -142,13 +171,18 @@ export default function AIPanel({ patientId }) {
     })}>
       <div style={css({ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 })}>
         <h3 style={css({ margin: 0, color: C.accent, fontSize: 18 })}>🤖 AI Predictive Insights</h3>
-        <button onClick={fetchAI}
-          style={css({
-            padding: "6px 14px", borderRadius: 8, border: `1px solid ${C.border}`,
-            background: "none", color: C.muted, cursor: "pointer", fontSize: 12,
-          })}>
-          ↻ Refresh
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {fromCache && <OfflineDataBadge savedAt={data?.savedAt} isOnline={isOnline} />}
+          <button onClick={fetchAI} disabled={offline}
+            style={css({
+              padding: "6px 14px", borderRadius: 8, border: `1px solid ${C.border}`,
+              background: "none", color: offline ? C.muted : C.muted,
+              cursor: offline ? "not-allowed" : "pointer", fontSize: 12,
+              opacity: offline ? 0.5 : 1,
+            })}>
+            ↻ Refresh
+          </button>
+        </div>
       </div>
 
       {/* ── Top row: Gauge + Summary ─────────────────────────────── */}
