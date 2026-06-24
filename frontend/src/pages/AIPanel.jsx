@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { aiAPI } from "../services/api";
 import { useNetwork } from "../offline/useNetwork";
+import { cacheAIResult, getCachedAIResult } from "../offline/offlineStore";
 import { OfflineDataBadge } from "../offline/OfflineBanner";
 
 const C = {
