@@ -1,3 +1,4 @@
+// build: offline-mode-v1 — forces a fresh Vercel build of the full dependency tree
 import { useState, useEffect, useCallback } from "react";
 import { authAPI, patientsAPI, vitalsAPI, alertsAPI } from "./services/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -6,7 +7,7 @@ import PupilPage  from "./pages/PupilPage";
 import CameraPage from "./pages/CameraPage";
 
 import { useNetwork }     from "./offline/useNetwork";
-import { OfflineBanner }  from "./offline/OfflineBanner";
+import { OfflineBanner, NetworkTestToggle } from "./offline/OfflineBanner";
 import { cachePatients, getCachedPatients } from "./offline/offlineStore";
 
 // ── THEME ─────────────────────────────────────────────────────────
@@ -793,6 +794,7 @@ export default function App() {
   return (
     <>
       <OfflineBanner {...network} onSync={network.syncNow} />
+      <NetworkTestToggle forceOffline={network.forceOffline} setForceOffline={network.setForceOffline} />
       {!user
         ? <LoginPage onLogin={handleLogin} />
         : <Dashboard user={user} onLogout={handleLogout} network={network} />
