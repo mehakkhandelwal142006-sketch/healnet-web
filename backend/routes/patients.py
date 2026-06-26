@@ -1,10 +1,24 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional
 from database import supabase
+import jwt
+import os
 
 router = APIRouter()
 
+JWT_SECRET = os.getenv("JWT_SECRET", "healnet-secret")
+
+# ── Helper: get user_id from token ───────────────────────────────
+def get_user_id(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    try:
+        token = authorization.replace("Bearer ", "")
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return payload.get("user_id") or payload.get("sub") or payload.get("id")
+    except Exception:
+        return None
 
 class PatientCreate(BaseModel):
     patient_id:          str
@@ -25,47 +39,44 @@ class PatientCreate(BaseModel):
     emergency_name:      Optional[str] = None
     emergency_relation:  Optional[str] = None
     emergency_contact:   Optional[str] = None
-
     model_config = {"extra": "ignore"}
 
-
+# ── GET ALL — only patients added by logged-in user ───────────────
 @router.get("/")
-def get_all_patients():
-    result = (
-        supabase.table("patients")
-        .select("*")
-        .order("created_at", desc=True)
-        .execute()
-    )
+def get_all_patients(authorization: Optional[str] = Header(None)):
+    user_id = get_user_id(authorization)
+    query = supabase.table("patients").select("*").order("created_at", desc=True)
+    if user_id:
+        query = query.eq("created_by", user_id)
+    result = query.execute()
     return result.data
 
-
+# ── SEARCH — only within logged-in user's patients ────────────────
 @router.get("/search/{query}")
-def search_patients(query: str):
-    result = (
-        supabase.table("patients")
-        .select("*")
-        .ilike("name", f"%{query}%")
-        .execute()
-    )
+def search_patients(query: str, authorization: Optional[str] = Header(None)):
+    user_id = get_user_id(authorization)
+    q = supabase.table("patients").select("*").ilike("name", f"%{query}%")
+    if user_id:
+        q = q.eq("created_by", user_id)
+    result = q.execute()
     return result.data
 
-
+# ── GET ONE — only if it belongs to logged-in user ────────────────
 @router.get("/{patient_id}")
-def get_patient(patient_id: str):
-    result = (
-        supabase.table("patients")
-        .select("*")
-        .eq("patient_id", patient_id)
-        .execute()
-    )
+def get_patient(patient_id: str, authorization: Optional[str] = Header(None)):
+    user_id = get_user_id(authorization)
+    q = supabase.table("patients").select("*").eq("patient_id", patient_id)
+    if user_id:
+        q = q.eq("created_by", user_id)
+    result = q.execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Patient not found")
     return result.data[0]
 
-
+# ── CREATE — save created_by = logged-in user ─────────────────────
 @router.post("/")
-def create_patient(body: PatientCreate):
+def create_patient(body: PatientCreate, authorization: Optional[str] = Header(None)):
+    user_id = get_user_id(authorization)
     existing = (
         supabase.table("patients")
         .select("patient_id")
@@ -74,28 +85,33 @@ def create_patient(body: PatientCreate):
     )
     if existing.data:
         raise HTTPException(status_code=400, detail="Patient ID already exists")
-
-    result = supabase.table("patients").insert(body.model_dump()).execute()
+    data = body.model_dump()
+    if user_id:
+        data["created_by"] = user_id
+    result = supabase.table("patients").insert(data).execute()
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to create patient")
     return result.data[0]
 
-
+# ── UPDATE — only if belongs to logged-in user ────────────────────
 @router.put("/{patient_id}")
-def update_patient(patient_id: str, body: dict):
+def update_patient(patient_id: str, body: dict, authorization: Optional[str] = Header(None)):
+    user_id = get_user_id(authorization)
     body.pop("patient_id", None)
-    result = (
-        supabase.table("patients")
-        .update(body)
-        .eq("patient_id", patient_id)
-        .execute()
-    )
+    q = supabase.table("patients").update(body).eq("patient_id", patient_id)
+    if user_id:
+        q = q.eq("created_by", user_id)
+    result = q.execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Patient not found")
     return result.data[0]
 
-
+# ── DELETE — only if belongs to logged-in user ────────────────────
 @router.delete("/{patient_id}")
-def delete_patient(patient_id: str):
-    supabase.table("patients").delete().eq("patient_id", patient_id).execute()
+def delete_patient(patient_id: str, authorization: Optional[str] = Header(None)):
+    user_id = get_user_id(authorization)
+    q = supabase.table("patients").delete().eq("patient_id", patient_id)
+    if user_id:
+        q = q.eq("created_by", user_id)
+    q.execute()
     return {"message": f"Patient {patient_id} deleted successfully"}
