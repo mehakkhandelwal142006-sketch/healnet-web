@@ -5,6 +5,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import AIPanel    from "./pages/AIPanel";
 import PupilPage  from "./pages/PupilPage";
 import CameraPage from "./pages/CameraPage";
+import TimelinePage from "./pages/TimelinePage";
 
 import { useNetwork }     from "./offline/useNetwork";
 import { OfflineBanner, NetworkTestToggle } from "./offline/OfflineBanner";
@@ -233,6 +234,7 @@ function Dashboard({ user, onLogout, network }) {
     { id: "patients", label: "Patients",        icon: "👥" },
     { id: "alerts",   label: "Alerts",          icon: "🚨" },
     { id: "vitals",   label: "Add Vitals",      icon: "💓" },
+    { id: "timeline", label: "Timeline",        icon: "🕓" },
     { id: "ai",       label: "AI Insights",     icon: "🤖" },
     { id: "pupil",    label: "Pupil Detection", icon: "👁"  },
     { id: "camera",   label: "Camera Vitals",   icon: "📷" },
@@ -535,6 +537,34 @@ function Dashboard({ user, onLogout, network }) {
                   <QuickVitalForm patients={patients} onAdded={load} />
                 </Card>
               </div>
+            )}
+
+            {/* ── HEALTH TIMELINE ───────────────────────────────── */}
+            {page === "timeline" && (
+              selPatient
+                ? <TimelinePage patientId={selPatient.patient_id} patientName={selPatient.name} />
+                : (
+                  <div>
+                    <h2 style={css({ margin: "0 0 24px", fontSize: 24 })}>🕓 Health Timeline</h2>
+                    <div style={css({ marginBottom: 20 })}>
+                      <select
+                        onChange={e => setSelPatient(patients.find(p => p.patient_id === e.target.value) || null)}
+                        style={css({
+                          padding: "10px 16px", borderRadius: 10,
+                          background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`,
+                          color: C.text, fontSize: 14, outline: "none", minWidth: 280,
+                        })}>
+                        <option value="">— Select a patient —</option>
+                        {patients.map(p => (
+                          <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={css({ color: C.muted, textAlign: "center", padding: 60 })}>
+                      Select a patient to view their health timeline
+                    </div>
+                  </div>
+                )
             )}
 
             {/* ── AI INSIGHTS ───────────────────────────────────── */}
