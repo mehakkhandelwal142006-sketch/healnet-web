@@ -89,4 +89,25 @@ export const smartwatchAPI = {
 export const appleHealthAPI = {
   getData: (userId, days) => API.get(`/apple-health/data?user_id=${userId}&days=${days}`),
 };
+// ── SYMPTOMS ──────────────────────────────────────────────────────
+export const symptomsAPI = {
+  getForPatient: (id, limit = 50) => API.get(`/symptoms/${id}?limit=${limit}`),
+  record:        (data)           => API.post("/symptoms/", data),
+};
+// ── MEDICATIONS ───────────────────────────────────────────────────
+export const medicationsAPI = {
+  getForPatient: (id, limit = 50) => API.get(`/medications/${id}?limit=${limit}`),
+  record:        (data)           => API.post("/medications/", data),
+};
+// ── TIMELINE ──────────────────────────────────────────────────────
+export const timelineAPI = {
+  // filters: { event_type, category, start_date, end_date, limit }
+  getForPatient: (id, filters = {}) => {
+    const params = new URLSearchParams(
+      Object.entries(filters).filter(([, v]) => v !== undefined && v !== "")
+    ).toString();
+    return API.get(`/timeline/${id}${params ? `?${params}` : ""}`);
+  },
+  getCategories: (id) => API.get(`/timeline/${id}/categories`),
+};
 export default API;
