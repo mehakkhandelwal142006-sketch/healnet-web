@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from database import supabase
+from services.timeline_helper import log_event, update_health_score
 
 router = APIRouter()
 
@@ -70,6 +71,41 @@ def record_vital(body: VitalCreate):
     for alert in alerts:
         alert["patient_id"] = body.patient_id
         supabase.table("alert_log").insert(alert).execute()
+
+    # ── Timeline: log the vital reading itself ─────────────────────
+    reading_summary = {
+        k: v for k, v in body.model_dump().items()
+        if k not in ("patient_id", "source", "device_id") and v is not None
+    }
+    log_event(
+        patient_id=body.patient_id,
+        event_type="vital_change",
+        category="vitals",
+        title="Vitals recorded",
+        description=", ".join(f"{k}: {v}" for k, v in reading_summary.items()),
+        severity="critical" if any(a["level"] == "danger" for a in alerts) else
+                  ("warning" if alerts else "info"),
+        value=reading_summary,
+        source_table="vitals_readings",
+        source_id=vital.get("id"),
+        occurred_at=vital.get("recorded_at"),
+    )
+
+    # ── Timeline: log each generated alert ──────────────────────────
+    for alert in alerts:
+        log_event(
+            patient_id=body.patient_id,
+            event_type="ai_alert",
+            category=alert["vital"],
+            title=alert["message"],
+            severity="critical" if alert["level"] == "danger" else "warning",
+            value={"vital": alert["vital"], "value": alert["value"]},
+            source_table="alert_log",
+            occurred_at=vital.get("recorded_at"),
+        )
+
+    # ── Timeline: recompute health score, log only if it changed ────
+    update_health_score(body.patient_id)
 
     return {"vital": vital, "alerts_generated": len(alerts)}
 
