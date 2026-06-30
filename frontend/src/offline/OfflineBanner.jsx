@@ -153,6 +153,44 @@ export function OfflineBanner({ isOnline, syncing, pendingCount, lastSyncedAt, o
 
 
 /**
+ * NetworkTestToggle
+ * ─────────────────────────────────────────────────────────────────
+ * Small floating dev/test control that lets you force the app into
+ * "offline" mode without actually disconnecting your network —
+ * useful for testing the offline banner/sync flow on demand.
+ *
+ * Props:
+ *   forceOffline     boolean
+ *   setForceOffline  (boolean) => void
+ */
+export function NetworkTestToggle({ forceOffline, setForceOffline }) {
+  return (
+    <button
+      onClick={() => setForceOffline(!forceOffline)}
+      title="Toggle simulated offline mode (testing only)"
+      style={{
+        position:   "fixed",
+        bottom:     16,
+        right:      16,
+        zIndex:     999,
+        background: forceOffline ? C.danger + "22" : "rgba(59,201,232,0.12)",
+        border:     `1px solid ${forceOffline ? C.danger : C.accent}55`,
+        color:      forceOffline ? C.danger : C.accent,
+        borderRadius: 20,
+        padding:    "6px 14px",
+        fontSize:   11,
+        fontWeight: 700,
+        cursor:     "pointer",
+        backdropFilter: "blur(6px)",
+      }}
+    >
+      {forceOffline ? "📵 Forced Offline" : "🧪 Test Offline"}
+    </button>
+  );
+}
+
+
+/**
  * OfflineDataBadge
  * ─────────────────────────────────────────────────────────────────
  * Small inline badge that says "Cached • Xm ago" next to any
