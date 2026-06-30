@@ -28,7 +28,7 @@ export const authAPI = {
 };
 // ── PATIENTS ──────────────────────────────────────────────────────
 export const patientsAPI = {
-  getAll:  ()           => API.get("/patients/"),
+  getAll:  (registeredBy) => API.get(`/patients/${registeredBy ? `?registered_by=${encodeURIComponent(registeredBy)}` : ""}`),
   getOne:  (id)         => API.get(`/patients/${id}`),
   create:  (data)       => API.post("/patients/", data),
   update:  (id, data)   => API.put(`/patients/${id}`, data),
@@ -67,14 +67,22 @@ export const pupilAPI = {
     return API.post("/pupil/analyze-both", form);
   },
 };
+<<<<<<< Updated upstream
 // ── SMARTWATCH ────────────────────────────────────────────────────
 // Matches backend/routes/smartwatch.py endpoints
 export const smartwatchAPI = {
   uploadCSV: (file) => {
+=======
+
+// ── SMARTWATCH ────────────────────────────────────────────────────
+export const smartwatchAPI = {
+  uploadCSV:        (file) => {
+>>>>>>> Stashed changes
     const form = new FormData();
     form.append("file", file);
     return API.post("/smartwatch/upload-csv", form);
   },
+<<<<<<< Updated upstream
   googleFitStatus:   ()              => API.get("/smartwatch/google-fit/status"),
   googleFitAuthUrl:  ()              => API.get("/smartwatch/google-fit/auth-url"),
   googleFitExchange: (code)          => API.post("/smartwatch/google-fit/exchange", { code }),
@@ -89,4 +97,18 @@ export const smartwatchAPI = {
 export const appleHealthAPI = {
   getData: (userId, days) => API.get(`/apple-health/data?user_id=${userId}&days=${days}`),
 };
+=======
+  googleFitStatus:  ()            => API.get("/smartwatch/google-fit/status"),
+  googleFitAuthUrl: ()            => API.get("/smartwatch/google-fit/auth-url"),
+  googleFitExchange:(code)        => API.post("/smartwatch/google-fit/exchange", { code }),
+  googleFitData:    (token, days) => API.post("/smartwatch/google-fit/data", { token, days }),
+};
+
+// ── APPLE HEALTH ──────────────────────────────────────────────────
+export const appleHealthAPI = {
+  getData:    (userId, days) => API.get(`/smartwatch/apple-health/data?user_id=${userId}&days=${days}`),
+  webhook:    (data)         => API.post("/smartwatch/apple-health/webhook", data),
+};
+
+>>>>>>> Stashed changes
 export default API;
