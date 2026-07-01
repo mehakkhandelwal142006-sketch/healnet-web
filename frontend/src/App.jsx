@@ -6,15 +6,13 @@ import AIPanel        from "./pages/AIPanel";
 import PupilPage      from "./pages/PupilPage";
 import CameraPage     from "./pages/CameraPage";
 import SmartWatchPage from "./pages/smartwatch";
+import TimelinePage   from "./pages/TimelinePage";
 
-<<<<<<< Updated upstream:frontend/src/App.jsx
 import { useNetwork }     from "./offline/useNetwork";
 import { OfflineBanner, NetworkTestToggle } from "./offline/OfflineBanner";
 import { cachePatients, getCachedPatients } from "./offline/offlineStore";
 
 // ── THEME ─────────────────────────────────────────────────────────
-=======
->>>>>>> Stashed changes:frontend/src/app.jsx
 const C = {
   bg:     "#030c2c",
   card:   "#04163c",
@@ -154,23 +152,13 @@ function LoginPage({ onLogin }) {
 // ═══════════════════════════════════════════════════════════════════
 //  DASHBOARD
 // ═══════════════════════════════════════════════════════════════════
-<<<<<<< Updated upstream:frontend/src/App.jsx
 function Dashboard({ user, onLogout, network }) {
-  const [page, setPage]         = useState("overview");
-  const [patients, setPatients] = useState([]);
-  const [alerts, setAlerts]     = useState([]);
-  const [stats, setStats]       = useState(null);
-  const [loading, setLoading]   = useState(true);
-  const [search, setSearch]     = useState("");
-=======
-function Dashboard({ user, onLogout }) {
   const [page, setPage]             = useState("overview");
   const [patients, setPatients]     = useState([]);
   const [alerts, setAlerts]         = useState([]);
   const [stats, setStats]           = useState(null);
   const [loading, setLoading]       = useState(true);
   const [search, setSearch]         = useState("");
->>>>>>> Stashed changes:frontend/src/app.jsx
   const [selPatient, setSelPatient] = useState(null);
   const [vitals, setVitals]         = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -187,12 +175,11 @@ function Dashboard({ user, onLogout }) {
         alertsAPI.stats(),
       ]);
       setPatients(pRes.data);
-      cachePatients(pRes.data); // ← save for offline use
+      cachePatients(pRes.data);
       setAlerts(aRes.data);
       setStats(sRes.data);
     } catch (e) {
       console.error(e);
-      // Offline fallback: load patients from cache so the app doesn't sit empty
       const cached = getCachedPatients();
       if (cached.length) setPatients(cached);
     }
@@ -201,11 +188,8 @@ function Dashboard({ user, onLogout }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // When the network comes back online and a sync completes, refresh data
   useEffect(() => {
-    if (network.isOnline && !network.syncing) {
-      load();
-    }
+    if (network.isOnline && !network.syncing) { load(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [network.isOnline, network.syncing]);
 
@@ -233,6 +217,7 @@ function Dashboard({ user, onLogout }) {
     { id: "patients",   label: "Patients",        icon: "👥" },
     { id: "alerts",     label: "Alerts",          icon: "🚨" },
     { id: "vitals",     label: "Add Vitals",      icon: "💓" },
+    { id: "timeline",   label: "Timeline",        icon: "🕓" },
     { id: "ai",         label: "AI Insights",     icon: "🤖" },
     { id: "pupil",      label: "Pupil Detection", icon: "👁"  },
     { id: "camera",     label: "Camera Vitals",   icon: "📷" },
@@ -244,26 +229,21 @@ function Dashboard({ user, onLogout }) {
   return (
     <div style={css({ minHeight: "100vh", background: C.bg, display: "flex", fontFamily: "'Segoe UI', sans-serif", color: C.text, flexDirection: mobile ? "column" : "row", position: "relative" })}>
 
-      {/* ── MOBILE TOP BAR — hamburger on LEFT ──────────────────── */}
       {mobile && (
         <div style={css({ background: C.card, borderBottom: `1px solid ${C.border}`, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 200 })}>
-          {/* ☰ hamburger on LEFT */}
           <button onClick={() => setSidebarOpen(o => !o)}
             style={css({ background: "none", border: `1px solid ${C.border}`, color: C.accent, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 18 })}>
             {sidebarOpen ? "✕" : "☰"}
           </button>
-          {/* Logo in centre/right */}
           <div style={css({ fontSize: 18, fontWeight: 800, color: C.accent })}>🩺 HealNet</div>
         </div>
       )}
 
-      {/* ── SIDEBAR OVERLAY ─────────────────────────────────────── */}
       {mobile && sidebarOpen && (
         <div onClick={() => setSidebarOpen(false)}
           style={css({ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 150 })} />
       )}
 
-      {/* ── SIDEBAR ─────────────────────────────────────────────── */}
       <div style={css({
         width: mobile ? 260 : 230,
         background: C.card, borderRight: `1px solid ${C.border}`,
@@ -303,13 +283,11 @@ function Dashboard({ user, onLogout }) {
         </div>
       </div>
 
-      {/* ── MAIN CONTENT ────────────────────────────────────────── */}
       <div style={css({ flex: 1, padding: mobile ? "16px" : "32px", overflowY: "auto", minWidth: 0 })}>
         {loading ? (
           <div style={css({ color: C.muted, textAlign: "center", paddingTop: 80, fontSize: 18 })}>Loading HealNet...</div>
         ) : (
           <>
-            {/* ── OVERVIEW ────────────────────────────────────────── */}
             {page === "overview" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>Good day, {user.name} 👋</h2>
@@ -329,7 +307,6 @@ function Dashboard({ user, onLogout }) {
                 </div>
                 <Card>
                   <h3 style={css({ margin: "0 0 16px", color: C.accent })}>Recent Patients</h3>
-                  {/* ── SCROLLER for recent patients list ── */}
                   <div style={css({ maxHeight: 320, overflowY: "auto", paddingRight: 4 })}>
                     {patients.slice(0, 5).map(p => (
                       <div key={p.patient_id} onClick={() => openPatient(p)}
@@ -349,23 +326,15 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── PATIENTS ──────────────────────────────────────── */}
             {page === "patients" && (
               <div>
-<<<<<<< Updated upstream:frontend/src/App.jsx
-                <div style={css({ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 })}>
-                  <h2 style={css({ margin: 0, fontSize: 24 })}>Patients</h2>
-                  <AddPatientForm onAdded={load} disabled={!network.isOnline} />
-=======
                 <div style={css({ display: "flex", justifyContent: "space-between", alignItems: mobile ? "flex-start" : "center", flexDirection: mobile ? "column" : "row", gap: mobile ? 12 : 0, marginBottom: 24 })}>
                   <h2 style={css({ margin: 0, fontSize: mobile ? 18 : 24 })}>Patients</h2>
-                  <AddPatientForm onAdded={load} />
->>>>>>> Stashed changes:frontend/src/app.jsx
+                  <AddPatientForm onAdded={load} disabled={!network.isOnline} />
                 </div>
                 <input placeholder="🔍  Search by name or ID..." value={search} onChange={e => setSearch(e.target.value)}
                   style={css({ width: "100%", maxWidth: mobile ? "100%" : 360, padding: "10px 16px", borderRadius: 10, background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`, color: C.text, fontSize: 14, outline: "none", marginBottom: 20, boxSizing: "border-box", fontFamily: "inherit" })} />
                 {mobile ? (
-                  /* ── SCROLLER for patient cards on mobile ── */
                   <div style={css({ display: "flex", flexDirection: "column", gap: 12, maxHeight: "70vh", overflowY: "auto", paddingRight: 2 })}>
                     {filtered.map(p => (
                       <Card key={p.patient_id} style={{ padding: 16 }}>
@@ -386,7 +355,6 @@ function Dashboard({ user, onLogout }) {
                   </div>
                 ) : (
                   <Card style={{ padding: 0 }}>
-                    {/* ── SCROLLER for patient table on desktop ── */}
                     <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
                       <table style={css({ width: "100%", borderCollapse: "collapse", fontSize: 14 })}>
                         <thead style={{ position: "sticky", top: 0, background: C.card, zIndex: 1 }}>
@@ -419,7 +387,6 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── PATIENT DETAIL ────────────────────────────────── */}
             {page === "patient" && selPatient && (
               <div>
                 <button onClick={() => setPage("patients")} style={css({ background: "none", border: "none", color: C.accent, cursor: "pointer", fontSize: 14, marginBottom: 20 })}>
@@ -428,7 +395,6 @@ function Dashboard({ user, onLogout }) {
                 <div style={css({ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 2fr", gap: 20, marginBottom: 20 })}>
                   <Card>
                     <h3 style={css({ margin: "0 0 16px", color: C.accent })}>Patient Info</h3>
-                    {/* ── SCROLLER for patient info ── */}
                     <div style={{ maxHeight: mobile ? 300 : 400, overflowY: "auto", paddingRight: 4 }}>
                       {[
                         ["ID",        selPatient.patient_id],
@@ -488,18 +454,15 @@ function Dashboard({ user, onLogout }) {
                   </Card>
                 </div>
                 <AddVitalForm patientId={selPatient.patient_id} onAdded={() => openPatient(selPatient)} />
-                {/* ── SCROLLER for AI panel ── */}
                 <div style={css({ marginTop: 20, maxHeight: mobile ? "70vh" : "none", overflowY: mobile ? "auto" : "visible" })}>
                   <AIPanel patientId={selPatient.patient_id} />
                 </div>
               </div>
             )}
 
-            {/* ── ALERTS ────────────────────────────────────────── */}
             {page === "alerts" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>Alerts</h2>
-                {/* ── SCROLLER for alerts ── */}
                 <div style={css({ display: "flex", flexDirection: "column", gap: 12, maxHeight: mobile ? "75vh" : "none", overflowY: mobile ? "auto" : "visible" })}>
                   {alerts.map(a => (
                     <Card key={a.id} style={{ borderColor: a.category === "Critical" ? C.danger + "66" : C.warn + "66", padding: mobile ? 14 : 24 }}>
@@ -526,7 +489,6 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── ADD VITALS ────────────────────────────────────── */}
             {page === "vitals" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>Record Vitals</h2>
@@ -536,7 +498,26 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── AI INSIGHTS ───────────────────────────────────── */}
+            {page === "timeline" && (
+              selPatient
+                ? <TimelinePage patientId={selPatient.patient_id} patientName={selPatient.name} />
+                : (
+                  <div>
+                    <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>🕓 Health Timeline</h2>
+                    <div style={css({ marginBottom: 20 })}>
+                      <select onChange={e => setSelPatient(patients.find(p => p.patient_id === e.target.value) || null)}
+                        style={css({ padding: "10px 16px", borderRadius: 10, background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`, color: C.text, fontSize: 14, outline: "none", width: mobile ? "100%" : "auto", minWidth: mobile ? "100%" : 280, boxSizing: "border-box" })}>
+                        <option value="">— Select a patient —</option>
+                        {patients.map(p => <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>)}
+                      </select>
+                    </div>
+                    <div style={css({ color: C.muted, textAlign: "center", padding: 60 })}>
+                      Select a patient to view their health timeline
+                    </div>
+                  </div>
+                )
+            )}
+
             {page === "ai" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>🤖 AI Insights</h2>
@@ -547,7 +528,6 @@ function Dashboard({ user, onLogout }) {
                     {patients.map(p => <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>)}
                   </select>
                 </div>
-                {/* ── SCROLLER for AI insights ── */}
                 <div style={{ maxHeight: mobile ? "65vh" : "none", overflowY: mobile ? "auto" : "visible", paddingRight: mobile ? 2 : 0 }}>
                   {selPatient
                     ? <AIPanel patientId={selPatient.patient_id} />
@@ -593,20 +573,10 @@ function AddPatientForm({ onAdded, disabled }) {
   const inputS = css({ width:"100%", padding:"10px 14px", borderRadius:8, background:"rgba(59,201,232,0.07)", border:`1px solid ${C.border}`, color:C.text, fontSize:14, outline:"none", boxSizing:"border-box", fontFamily:"inherit" });
 
   if (!open) return (
-<<<<<<< Updated upstream:frontend/src/App.jsx
     <button onClick={() => !disabled && setOpen(true)} disabled={disabled}
       title={disabled ? "Adding patients requires an internet connection" : undefined}
-      style={css({
-        padding: "10px 20px", borderRadius: 10, border: "none",
-        background: disabled ? "rgba(59,201,232,0.3)" : C.accent,
-        color: C.bg, fontWeight: 700,
-        cursor: disabled ? "not-allowed" : "pointer",
-      })}>
+      style={css({ padding:"10px 20px", borderRadius:10, border:"none", background: disabled ? "rgba(59,201,232,0.3)" : C.accent, color:C.bg, fontWeight:700, fontSize: mobile ? 13 : 15, cursor: disabled ? "not-allowed" : "pointer" })}>
       {disabled ? "📵 Offline" : "+ Add Patient"}
-=======
-    <button onClick={() => setOpen(true)} style={css({ padding:"10px 20px", borderRadius:10, border:"none", background:C.accent, color:C.bg, fontWeight:700, cursor:"pointer", fontSize: mobile ? 13 : 15 })}>
-      + Add Patient
->>>>>>> Stashed changes:frontend/src/app.jsx
     </button>
   );
 
@@ -724,7 +694,6 @@ export default function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("healnet_user")); } catch { return null; }
   });
-<<<<<<< Updated upstream:frontend/src/App.jsx
 
   const network = useNetwork();
 
@@ -746,10 +715,3 @@ export default function App() {
     </>
   );
 }
-=======
-  function handleLogin(u)  { setUser(u); }
-  function handleLogout()  { localStorage.removeItem("healnet_token"); localStorage.removeItem("healnet_user"); setUser(null); }
-  if (!user) return <LoginPage onLogin={handleLogin} />;
-  return <Dashboard user={user} onLogout={handleLogout} />;
-}
->>>>>>> Stashed changes:frontend/src/app.jsx
