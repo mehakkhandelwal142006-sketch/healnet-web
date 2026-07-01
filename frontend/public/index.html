@@ -2,8 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
     <meta name="theme-color" content="#030c2c" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="HealNet" />
+    <meta name="format-detection" content="telephone=no" />
     <meta
       name="description"
       content="HealNet AI — Predict, Prevent, Personalize"
@@ -15,13 +20,61 @@
         margin: 0;
         padding: 0;
       }
+
+      html {
+        /* Prevent horizontal scroll on all devices */
+        overflow-x: hidden;
+        /* Better text sizing on mobile */
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+
       body {
         background: #030c2c;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
+        overflow-x: hidden;
+        /* Safe area padding for iPhone notch / Dynamic Island */
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+        padding-left: env(safe-area-inset-left);
+        padding-right: env(safe-area-inset-right);
       }
-      /* Loading screen before React loads */
+
+      #root {
+        /* Ensure root never overflows horizontally */
+        max-width: 100vw;
+        overflow-x: hidden;
+      }
+
+      /* ── Tap highlight — remove blue flash on mobile taps ─────── */
+      * {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      /* ── Inputs — prevent iOS zoom on focus (font-size < 16px) ── */
+      input, select, textarea {
+        font-size: 16px !important;
+      }
+
+      /* ── Scrollbars — thin on mobile, hidden on very small ──────── */
+      ::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(59, 201, 232, 0.25);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(59, 201, 232, 0.5);
+      }
+
+      /* ── Loading screen before React loads ──────────────────────── */
       #splash {
         position: fixed;
         inset: 0;
@@ -56,6 +109,13 @@
       }
       @keyframes spin {
         to { transform: rotate(360deg); }
+      }
+
+      /* ── Extra small screens (< 360px) — scale down slightly ───── */
+      @media screen and (max-width: 359px) {
+        #splash h1 { font-size: 24px; }
+        #splash p  { font-size: 10px; letter-spacing: 2px; }
+        .spinner   { width: 28px; height: 28px; }
       }
     </style>
   </head>
