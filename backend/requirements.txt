@@ -10,3 +10,4 @@ opencv-python-headless==4.9.0.80
 numpy==1.26.4
 pandas==2.2.3
 google-auth==2.29.0
+google-auth-oauthlib==1.2.0
