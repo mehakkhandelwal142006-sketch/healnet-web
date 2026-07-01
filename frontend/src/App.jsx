@@ -5,7 +5,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import AIPanel        from "./pages/AIPanel";
 import PupilPage      from "./pages/PupilPage";
 import CameraPage     from "./pages/CameraPage";
-import SmartWatchPage from "./pages/smartwatch";
+import SmartWatchPage from "./pages/SmartWatchPage";
 import TimelinePage   from "./pages/TimelinePage";
 
 import { useNetwork }     from "./offline/useNetwork";
