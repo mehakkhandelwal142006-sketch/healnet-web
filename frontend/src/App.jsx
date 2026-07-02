@@ -1,4 +1,3 @@
-// build: offline-mode-v1 — forces a fresh Vercel build of the full dependency tree
 import { useState, useEffect, useCallback } from "react";
 import { authAPI, patientsAPI, vitalsAPI, alertsAPI } from "./services/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -6,11 +5,10 @@ import AIPanel        from "./pages/AIPanel";
 import PupilPage      from "./pages/PupilPage";
 import CameraPage     from "./pages/CameraPage";
 import SmartWatchPage from "./pages/SmartWatchPage";
-import TimelinePage   from "./pages/TimelinePage";
 
-import { useNetwork }     from "./offline/useNetwork";
-import { OfflineBanner, NetworkTestToggle } from "./offline/OfflineBanner";
-import { cachePatients, getCachedPatients } from "./offline/offlineStore";
+import { useNetwork }                        from "./offline/useNetwork";
+import { OfflineBanner }                     from "./offline/OfflineBanner";
+import { cachePatients, getCachedPatients }  from "./offline/offlineStore";
 
 // ── THEME ─────────────────────────────────────────────────────────
 const C = {
@@ -63,6 +61,109 @@ function EyeIcon({ open, color }) {
       <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
       <line x1="1" y1="1" x2="23" y2="23"/>
     </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TIMELINE PAGE (inline — no separate file needed)
+// ═══════════════════════════════════════════════════════════════════
+function TimelinePage({ patientId, patientName }) {
+  const [vitals, setVitals]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState("");
+  const width  = useWindowWidth();
+  const mobile = width < 768;
+
+  useEffect(() => {
+    setLoading(true);
+    vitalsAPI.getForPatient(patientId, 30)
+      .then(r => { setVitals(r.data.reverse()); setLoading(false); })
+      .catch(() => { setError("Could not load vitals."); setLoading(false); });
+  }, [patientId]);
+
+  if (loading) return <div style={{ color: C.muted, textAlign: "center", padding: 60 }}>Loading timeline...</div>;
+  if (error)   return <div style={{ color: C.danger, textAlign: "center", padding: 60 }}>{error}</div>;
+  if (!vitals.length) return (
+    <div style={{ color: C.muted, textAlign: "center", padding: 60 }}>
+      No vitals recorded yet for {patientName}.
+    </div>
+  );
+
+  const vitalDefs = [
+    { key: "heart_rate",   label: "Heart Rate",   unit: "bpm",   color: C.danger,  icon: "❤️"  },
+    { key: "spo2",         label: "SpO2",          unit: "%",     color: C.accent,  icon: "🫁"  },
+    { key: "temperature",  label: "Temperature",   unit: "°C",    color: C.warn,    icon: "🌡️" },
+    { key: "systolic_bp",  label: "Systolic BP",   unit: "mmHg",  color: C.accent2, icon: "💉"  },
+    { key: "blood_sugar",  label: "Blood Sugar",   unit: "mg/dL", color: "#a78bfa", icon: "🩸"  },
+  ];
+
+  return (
+    <div>
+      <h2 style={{ margin: "0 0 6px", fontSize: mobile ? 18 : 22 }}>🕓 Health Timeline</h2>
+      <p style={{ color: C.muted, fontSize: 13, marginBottom: 24 }}>
+        Patient: <strong style={{ color: C.text }}>{patientName}</strong> · Last {vitals.length} readings
+      </p>
+
+      {/* Charts */}
+      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 24 }}>
+        {vitalDefs.map(v => {
+          const data = vitals.filter(r => r[v.key] != null);
+          if (!data.length) return null;
+          return (
+            <Card key={v.key} style={{ padding: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: v.color, marginBottom: 12 }}>
+                {v.icon} {v.label}
+              </div>
+              <ResponsiveContainer width="100%" height={120}>
+                <LineChart data={data}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                  <XAxis dataKey="recorded_at" tickFormatter={d => new Date(d).toLocaleDateString()} stroke={C.muted} tick={{ fontSize: 9 }} />
+                  <YAxis stroke={C.muted} tick={{ fontSize: 9 }} />
+                  <Tooltip
+                    contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 11 }}
+                    labelFormatter={d => new Date(d).toLocaleString()}
+                    formatter={val => [`${val} ${v.unit}`, v.label]}
+                  />
+                  <Line type="monotone" dataKey={v.key} stroke={v.color} dot={{ r: 3, fill: v.color }} strokeWidth={2} name={v.label} />
+                </LineChart>
+              </ResponsiveContainer>
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Timeline list */}
+      <Card style={{ padding: 0 }}>
+        <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ fontWeight: 700, color: C.text, fontSize: 14 }}>📋 All Readings</div>
+        </div>
+        <div style={{ maxHeight: 400, overflowY: "auto" }}>
+          {[...vitals].reverse().map((v, i) => (
+            <div key={i} style={{
+              padding: "14px 20px", borderBottom: `1px solid ${C.border}44`,
+              display: "flex", alignItems: "flex-start", gap: 14,
+            }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.accent, marginTop: 5, flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>
+                  {new Date(v.recorded_at).toLocaleString()} · {v.source || "manual"}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {vitalDefs.map(d => v[d.key] != null ? (
+                    <span key={d.key} style={{
+                      background: d.color + "18", border: `1px solid ${d.color}44`,
+                      borderRadius: 6, padding: "2px 8px", fontSize: 12, color: d.color, fontWeight: 600,
+                    }}>
+                      {d.icon} {v[d.key]} {d.unit}
+                    </span>
+                  ) : null)}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -236,6 +337,11 @@ function Dashboard({ user, onLogout, network }) {
             {sidebarOpen ? "✕" : "☰"}
           </button>
           <div style={css({ fontSize: 18, fontWeight: 800, color: C.accent })}>🩺 HealNet</div>
+          {!network.isOnline && (
+            <div style={{ fontSize: 10, color: C.danger, background: "rgba(255,77,109,0.15)", borderRadius: 6, padding: "3px 8px", fontWeight: 600 }}>
+              📵
+            </div>
+          )}
         </div>
       )}
 
@@ -258,6 +364,11 @@ function Dashboard({ user, onLogout, network }) {
           <div style={css({ padding: "0 20px 24px", borderBottom: `1px solid ${C.border}` })}>
             <div style={css({ fontSize: 22, fontWeight: 800, color: C.accent })}>🩺 HealNet</div>
             <div style={css({ color: C.muted, fontSize: 11, marginTop: 2 })}>AI Health Platform</div>
+            {!network.isOnline && (
+              <div style={{ marginTop: 8, fontSize: 10, color: C.danger, background: "rgba(255,77,109,0.1)", borderRadius: 6, padding: "3px 8px", display: "inline-block", fontWeight: 600 }}>
+                📵 Offline {network.pendingCount > 0 && `· ${network.pendingCount} pending`}
+              </div>
+            )}
           </div>
         )}
         <nav style={css({ padding: "16px 12px", flex: 1, overflowY: "auto" })}>
@@ -291,6 +402,11 @@ function Dashboard({ user, onLogout, network }) {
             {page === "overview" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>Good day, {user.name} 👋</h2>
+                {!network.isOnline && (
+                  <div style={{ background: "rgba(255,209,102,0.08)", border: "1px solid rgba(255,209,102,0.3)", borderRadius: 12, padding: "12px 18px", marginBottom: 20, fontSize: 13, color: C.warn }}>
+                    📵 You're offline — showing cached data. Alerts and stats may not reflect the latest.
+                  </div>
+                )}
                 <div style={css({ display: "grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4,1fr)", gap: mobile ? 10 : 16, marginBottom: 28 })}>
                   {[
                     { label: "Total Patients",  value: patients.length,            color: C.accent,  icon: "👥" },
@@ -455,7 +571,12 @@ function Dashboard({ user, onLogout, network }) {
                 </div>
                 <AddVitalForm patientId={selPatient.patient_id} onAdded={() => openPatient(selPatient)} />
                 <div style={css({ marginTop: 20, maxHeight: mobile ? "70vh" : "none", overflowY: mobile ? "auto" : "visible" })}>
-                  <AIPanel patientId={selPatient.patient_id} />
+                  {network.isOnline
+                    ? <AIPanel patientId={selPatient.patient_id} />
+                    : <div style={{ background: "rgba(59,201,232,0.04)", border: `1px solid ${C.border}`, borderRadius: 16, padding: 24, textAlign: "center", color: C.muted, fontSize: 14 }}>
+                        🤖 AI Insights require an internet connection.
+                      </div>
+                  }
                 </div>
               </div>
             )}
@@ -463,6 +584,11 @@ function Dashboard({ user, onLogout, network }) {
             {page === "alerts" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>Alerts</h2>
+                {!network.isOnline && (
+                  <div style={{ background: "rgba(255,209,102,0.08)", border: "1px solid rgba(255,209,102,0.3)", borderRadius: 10, padding: "10px 16px", marginBottom: 16, fontSize: 13, color: C.warn }}>
+                    📵 Offline — showing last loaded alerts.
+                  </div>
+                )}
                 <div style={css({ display: "flex", flexDirection: "column", gap: 12, maxHeight: mobile ? "75vh" : "none", overflowY: mobile ? "auto" : "visible" })}>
                   {alerts.map(a => (
                     <Card key={a.id} style={{ borderColor: a.category === "Critical" ? C.danger + "66" : C.warn + "66", padding: mobile ? 14 : 24 }}>
@@ -475,7 +601,7 @@ function Dashboard({ user, onLogout, network }) {
                           <div style={css({ fontWeight: 600, marginBottom: 4, fontSize: mobile ? 13 : 15 })}>{a.message}</div>
                           <div style={css({ color: C.muted, fontSize: 12 })}>Patient: {a.patient_name || a.patient_id} · {new Date(a.recorded_at).toLocaleString()}</div>
                         </div>
-                        {!a.acknowledged && (
+                        {!a.acknowledged && network.isOnline && (
                           <button onClick={() => ackAlert(a.id)}
                             style={css({ padding: "7px 16px", borderRadius: 8, border: `1px solid ${C.accent2}`, background: "transparent", color: C.accent2, cursor: "pointer", fontSize: 13, whiteSpace: "nowrap" })}>
                             ✓ Acknowledge
@@ -521,23 +647,38 @@ function Dashboard({ user, onLogout, network }) {
             {page === "ai" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>🤖 AI Insights</h2>
-                <div style={css({ marginBottom: 20 })}>
-                  <select onChange={e => setSelPatient(patients.find(p => p.patient_id === e.target.value) || null)}
-                    style={css({ padding: "10px 16px", borderRadius: 10, background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`, color: C.text, fontSize: 14, outline: "none", width: mobile ? "100%" : "auto", minWidth: mobile ? "100%" : 280, boxSizing: "border-box" })}>
-                    <option value="">— Select a patient —</option>
-                    {patients.map(p => <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>)}
-                  </select>
-                </div>
-                <div style={{ maxHeight: mobile ? "65vh" : "none", overflowY: mobile ? "auto" : "visible", paddingRight: mobile ? 2 : 0 }}>
-                  {selPatient
-                    ? <AIPanel patientId={selPatient.patient_id} />
-                    : <div style={css({ color: C.muted, textAlign: "center", padding: 60 })}>Select a patient to view AI analysis</div>
-                  }
-                </div>
+                {!network.isOnline ? (
+                  <div style={{ background: "rgba(59,201,232,0.04)", border: `1px solid ${C.border}`, borderRadius: 16, padding: 48, textAlign: "center", color: C.muted, fontSize: 15 }}>
+                    🤖 AI Insights require an internet connection.
+                  </div>
+                ) : (
+                  <>
+                    <div style={css({ marginBottom: 20 })}>
+                      <select onChange={e => setSelPatient(patients.find(p => p.patient_id === e.target.value) || null)}
+                        style={css({ padding: "10px 16px", borderRadius: 10, background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`, color: C.text, fontSize: 14, outline: "none", width: mobile ? "100%" : "auto", minWidth: mobile ? "100%" : 280, boxSizing: "border-box" })}>
+                        <option value="">— Select a patient —</option>
+                        {patients.map(p => <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>)}
+                      </select>
+                    </div>
+                    <div style={{ maxHeight: mobile ? "65vh" : "none", overflowY: mobile ? "auto" : "visible", paddingRight: mobile ? 2 : 0 }}>
+                      {selPatient
+                        ? <AIPanel patientId={selPatient.patient_id} />
+                        : <div style={css({ color: C.muted, textAlign: "center", padding: 60 })}>Select a patient to view AI analysis</div>
+                      }
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
-            {page === "pupil"      && <PupilPage />}
+            {page === "pupil" && (
+              network.isOnline
+                ? <PupilPage />
+                : <div style={{ background: "rgba(59,201,232,0.04)", border: `1px solid ${C.border}`, borderRadius: 16, padding: 48, textAlign: "center", color: C.muted, fontSize: 15 }}>
+                    👁 Pupil Detection requires an internet connection.
+                  </div>
+            )}
+
             {page === "camera"     && <CameraPage />}
             {page === "smartwatch" && <SmartWatchPage />}
           </>
@@ -561,6 +702,7 @@ function AddPatientForm({ onAdded, disabled }) {
 
   async function save() {
     if (!form.patient_id || !form.name) { setMsg("ID and Name are required"); return; }
+    if (disabled) { setMsg("Adding patients requires an internet connection."); return; }
     setLoading(true); setMsg("");
     try {
       await patientsAPI.create({ ...form, age: parseInt(form.age) || null });
@@ -706,8 +848,12 @@ export default function App() {
 
   return (
     <>
-      <OfflineBanner {...network} onSync={network.syncNow} />
-      <NetworkTestToggle forceOffline={network.forceOffline} setForceOffline={network.setForceOffline} />
+      <OfflineBanner
+        isOnline={network.isOnline}
+        syncing={network.syncing}
+        pendingCount={network.pendingCount}
+        lastSyncedAt={network.lastSyncedAt}
+      />
       {!user
         ? <LoginPage onLogin={handleLogin} />
         : <Dashboard user={user} onLogout={handleLogout} network={network} />
