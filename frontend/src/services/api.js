@@ -22,18 +22,18 @@ API.interceptors.response.use(
 );
 // ── AUTH ──────────────────────────────────────────────────────────
 export const authAPI = {
-  login:  (email, password)              => API.post("/auth/login",  { email, password }),
-  signup: (name, email, password, kind)  => API.post("/auth/signup", { name, email, password, kind }),
-  me:     ()                             => API.get("/auth/me"),
+  login:  (email, password)             => API.post("/auth/login",  { email, password }),
+  signup: (name, email, password, kind) => API.post("/auth/signup", { name, email, password, kind }),
+  me:     ()                            => API.get("/auth/me"),
 };
 // ── PATIENTS ──────────────────────────────────────────────────────
 export const patientsAPI = {
   getAll:  (registeredBy) => API.get(`/patients/${registeredBy ? `?registered_by=${encodeURIComponent(registeredBy)}` : ""}`),
-  getOne:  (id)         => API.get(`/patients/${id}`),
-  create:  (data)       => API.post("/patients/", data),
-  update:  (id, data)   => API.put(`/patients/${id}`, data),
-  delete:  (id)         => API.delete(`/patients/${id}`),
-  search:  (query)      => API.get(`/patients/search/${query}`),
+  getOne:  (id)           => API.get(`/patients/${id}`),
+  create:  (data)         => API.post("/patients/", data),
+  update:  (id, data)     => API.put(`/patients/${id}`, data),
+  delete:  (id)           => API.delete(`/patients/${id}`),
+  search:  (query)        => API.get(`/patients/search/${query}`),
 };
 // ── VITALS ────────────────────────────────────────────────────────
 export const vitalsAPI = {
@@ -67,48 +67,37 @@ export const pupilAPI = {
     return API.post("/pupil/analyze-both", form);
   },
 };
-<<<<<<< Updated upstream
-// ── SMARTWATCH ────────────────────────────────────────────────────
-// Matches backend/routes/smartwatch.py endpoints
-export const smartwatchAPI = {
-  uploadCSV: (file) => {
-=======
-
 // ── SMARTWATCH ────────────────────────────────────────────────────
 export const smartwatchAPI = {
-  uploadCSV:        (file) => {
->>>>>>> Stashed changes
-    const form = new FormData();
-    form.append("file", file);
-    return API.post("/smartwatch/upload-csv", form);
+  uploadCSV:         (file)         => { const form = new FormData(); form.append("file", file); return API.post("/smartwatch/upload-csv", form); },
+  googleFitStatus:   ()             => API.get("/smartwatch/google-fit/status"),
+  googleFitAuthUrl:  ()             => API.get("/smartwatch/google-fit/auth-url"),
+  googleFitExchange: (code)         => API.post("/smartwatch/google-fit/exchange", { code }),
+  googleFitData:     (token, days)  => API.post("/smartwatch/google-fit/data", { token, days }),
+};
+// ── APPLE HEALTH ──────────────────────────────────────────────────
+export const appleHealthAPI = {
+  getData:  (userId, days) => API.get(`/smartwatch/apple-health/data?user_id=${userId}&days=${days}`),
+  webhook:  (data)         => API.post("/smartwatch/apple-health/webhook", data),
+};
+// ── SYMPTOMS ──────────────────────────────────────────────────────
+export const symptomsAPI = {
+  getForPatient: (id, limit = 50) => API.get(`/symptoms/${id}?limit=${limit}`),
+  record:        (data)           => API.post("/symptoms/", data),
+};
+// ── MEDICATIONS ───────────────────────────────────────────────────
+export const medicationsAPI = {
+  getForPatient: (id, limit = 50) => API.get(`/medications/${id}?limit=${limit}`),
+  record:        (data)           => API.post("/medications/", data),
+};
+// ── TIMELINE ──────────────────────────────────────────────────────
+export const timelineAPI = {
+  getForPatient: (id, filters = {}) => {
+    const params = new URLSearchParams(
+      Object.entries(filters).filter(([, v]) => v !== undefined && v !== "")
+    ).toString();
+    return API.get(`/timeline/${id}${params ? `?${params}` : ""}`);
   },
-<<<<<<< Updated upstream
-  googleFitStatus:   ()              => API.get("/smartwatch/google-fit/status"),
-  googleFitAuthUrl:  ()              => API.get("/smartwatch/google-fit/auth-url"),
-  googleFitExchange: (code)          => API.post("/smartwatch/google-fit/exchange", { code }),
-  googleFitData:     (token, days)   => API.post("/smartwatch/google-fit/data", { token, days }),
+  getCategories: (id) => API.get(`/timeline/${id}/categories`),
 };
-// ── APPLE HEALTH ──────────────────────────────────────────────────
-// NOTE: backend/routes/apple_health.py does not exist yet.
-// This calls a placeholder endpoint so the app builds and runs;
-// it will safely fail with a normal network error until the
-// corresponding backend route is added (the UI already handles
-// this via cached-data fallback in offline mode).
-export const appleHealthAPI = {
-  getData: (userId, days) => API.get(`/apple-health/data?user_id=${userId}&days=${days}`),
-};
-=======
-  googleFitStatus:  ()            => API.get("/smartwatch/google-fit/status"),
-  googleFitAuthUrl: ()            => API.get("/smartwatch/google-fit/auth-url"),
-  googleFitExchange:(code)        => API.post("/smartwatch/google-fit/exchange", { code }),
-  googleFitData:    (token, days) => API.post("/smartwatch/google-fit/data", { token, days }),
-};
-
-// ── APPLE HEALTH ──────────────────────────────────────────────────
-export const appleHealthAPI = {
-  getData:    (userId, days) => API.get(`/smartwatch/apple-health/data?user_id=${userId}&days=${days}`),
-  webhook:    (data)         => API.post("/smartwatch/apple-health/webhook", data),
-};
-
->>>>>>> Stashed changes
 export default API;
