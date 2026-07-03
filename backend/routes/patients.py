@@ -47,7 +47,7 @@ def get_all_patients(authorization: Optional[str] = Header(None)):
     user_id = get_user_id(authorization)
     query = supabase.table("patients").select("*").order("created_at", desc=True)
     if user_id:
-        query = query.eq("created_by", user_id)
+	query = query.or_(f"created_by.eq.{user_id},created_by.is.null")
     result = query.execute()
     return result.data
 
