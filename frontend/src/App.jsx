@@ -363,7 +363,6 @@ function Dashboard({ user, onLogout, network }) {
 
   useEffect(() => {
     if (network.isOnline && !network.syncing) { load(); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [network.isOnline, network.syncing]);
 
   async function openPatient(p) {
