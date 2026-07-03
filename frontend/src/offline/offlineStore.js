@@ -160,6 +160,20 @@ export function evaluateOfflineAlerts(summary) {
   return alerts;
 }
 
+// ── Generic key-value cache (catch-all for any component) ────────
+export function cacheGeneric(key, data) {
+  write(`healnet_generic_${key}`, { data, savedAt: Date.now() });
+}
+
+export function getCachedGeneric(key) {
+  const stored = read(`healnet_generic_${key}`);
+  return stored ?? null; // { data, savedAt } | null
+}
+
+export function clearCachedGeneric(key) {
+  remove(`healnet_generic_${key}`);
+}
+
 // ── Utility: human-readable age of a timestamp ───────────────────
 export function timeAgo(ts) {
   if (!ts) return "never";
