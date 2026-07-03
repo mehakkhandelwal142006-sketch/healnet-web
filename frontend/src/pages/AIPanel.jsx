@@ -1,8 +1,5 @@
 import { useState, useEffect } from "react";
 import { aiAPI } from "../services/api";
-import { useNetwork } from "../offline/useNetwork";
-import { cacheAIResult, getCachedAIResult } from "../offline/offlineStore";
-import { OfflineDataBadge } from "../offline/OfflineBanner";
 
 const C = {
   bg: "#030c2c", card: "#04163c", border: "rgba(59,201,232,0.18)",
@@ -106,48 +103,22 @@ function BreakdownRow({ vital, level, score, max_score, pct }) {
 
 // ── MAIN COMPONENT ─────────────────────────────────────────────────
 export default function AIPanel({ patientId }) {
-  const [data, setData]           = useState(null);
-  const [loading, setLoading]     = useState(false);
-  const [error, setError]         = useState("");
+  const [data, setData]                   = useState(null);
+  const [loading, setLoading]             = useState(false);
+  const [error, setError]                 = useState("");
   const [showBreakdown, setShowBreakdown] = useState(false);
-  const [fromCache, setFromCache] = useState(false);
-
-  const { isOnline } = useNetwork();
-  const offline = !isOnline;
 
   useEffect(() => {
     if (patientId) fetchAI();
   }, [patientId]);
 
-  // When going back online, refresh if we were showing cached data
-  useEffect(() => {
-    if (!offline && fromCache && patientId) fetchAI();
-  }, [offline]);
-
   async function fetchAI() {
-    // If offline, try cache first
-    if (offline || !navigator.onLine) {
-      const cached = getCachedAIResult(patientId);
-      if (cached) { setData(cached); setFromCache(true); return; }
-      setError("You're offline and no cached AI analysis is available for this patient.");
-      return;
-    }
-
-    setLoading(true); setError(""); setFromCache(false);
+    setLoading(true); setError("");
     try {
       const res = await aiAPI.analyze(patientId);
       setData(res.data);
-      // Cache for offline use
-      cacheAIResult(patientId, res.data);
     } catch (e) {
-      // Network failed mid-request — fall back to cache
-      const cached = getCachedAIResult(patientId);
-      if (cached) {
-        setData(cached);
-        setFromCache(true);
-      } else {
-        setError(e.response?.data?.detail || "Could not load AI analysis");
-      }
+      setError(e.response?.data?.detail || "Could not load AI analysis");
     }
     setLoading(false);
   }
@@ -171,21 +142,16 @@ export default function AIPanel({ patientId }) {
     })}>
       <div style={css({ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 })}>
         <h3 style={css({ margin: 0, color: C.accent, fontSize: 18 })}>🤖 AI Predictive Insights</h3>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {fromCache && <OfflineDataBadge savedAt={data?.savedAt} isOnline={isOnline} />}
-          <button onClick={fetchAI} disabled={offline}
-            style={css({
-              padding: "6px 14px", borderRadius: 8, border: `1px solid ${C.border}`,
-              background: "none", color: offline ? C.muted : C.muted,
-              cursor: offline ? "not-allowed" : "pointer", fontSize: 12,
-              opacity: offline ? 0.5 : 1,
-            })}>
-            ↻ Refresh
-          </button>
-        </div>
+        <button onClick={fetchAI}
+          style={css({
+            padding: "6px 14px", borderRadius: 8, border: `1px solid ${C.border}`,
+            background: "none", color: C.muted, cursor: "pointer", fontSize: 12,
+          })}>
+          ↻ Refresh
+        </button>
       </div>
 
-      {/* ── Top row: Gauge + Summary ─────────────────────────────── */}
+      {/* ── Top row: Gauge + Summary ── */}
       <div style={css({ display: "grid", gridTemplateColumns: "220px 1fr", gap: 20, marginBottom: 24 })}>
         <div style={css({
           background: "rgba(59,201,232,0.05)", borderRadius: 12,
@@ -193,18 +159,11 @@ export default function AIPanel({ patientId }) {
         })}>
           <RiskGauge score={data.risk_score} label={data.risk_label} color={data.risk_color} />
         </div>
-
-        <div style={css({
-          background: "rgba(59,201,232,0.05)", borderRadius: 12, padding: 20,
-        })}>
-          <div style={css({ fontSize: 11, color: C.muted, letterSpacing: 2, marginBottom: 8 })}>
-            AI RISK ASSESSMENT
-          </div>
+        <div style={css({ background: "rgba(59,201,232,0.05)", borderRadius: 12, padding: 20 })}>
+          <div style={css({ fontSize: 11, color: C.muted, letterSpacing: 2, marginBottom: 8 })}>AI RISK ASSESSMENT</div>
           <div style={css({ fontSize: 36, fontWeight: 800, color: data.risk_color, marginBottom: 8 })}>
             {data.risk_score}%
-            <span style={css({ fontSize: 14, marginLeft: 10, color: data.risk_color })}>
-              {data.risk_label}
-            </span>
+            <span style={css({ fontSize: 14, marginLeft: 10, color: data.risk_color })}>{data.risk_label}</span>
           </div>
           <div style={css({ color: C.muted, fontSize: 13, lineHeight: 1.6 })}>
             Composite score from <strong style={{ color: C.text }}>{data.vitals_count}</strong> vital signs
@@ -214,7 +173,7 @@ export default function AIPanel({ patientId }) {
         </div>
       </div>
 
-      {/* ── Trends ───────────────────────────────────────────────── */}
+      {/* ── Trends ── */}
       <div style={css({ marginBottom: 24 })}>
         <h4 style={css({ color: C.text, margin: "0 0 12px", fontSize: 15 })}>📊 Trend Analysis</h4>
         {data.trends.length === 0 ? (
@@ -224,10 +183,7 @@ export default function AIPanel({ patientId }) {
         ) : (
           <div style={css({ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 })}>
             {data.trends.map((t, i) => (
-              <div key={i} style={css({
-                background: t.color + "22", border: `1px solid ${t.color}44`,
-                borderRadius: 10, padding: 14,
-              })}>
+              <div key={i} style={css({ background: t.color + "22", border: `1px solid ${t.color}44`, borderRadius: 10, padding: 14 })}>
                 <div style={css({ fontSize: 11, color: C.muted, marginBottom: 4 })}>{t.vital}</div>
                 <div style={css({ fontWeight: 700, color: t.color, marginBottom: 6 })}>
                   {t.trend === "Worsening" ? "📈" : t.trend === "Watch" ? "⚠️" : "📉"} {t.trend}
@@ -239,7 +195,7 @@ export default function AIPanel({ patientId }) {
         )}
       </div>
 
-      {/* ── Recommendations ──────────────────────────────────────── */}
+      {/* ── Recommendations ── */}
       <div style={css({ marginBottom: 24 })}>
         <h4 style={css({ color: C.text, margin: "0 0 12px", fontSize: 15 })}>💡 AI Recommendations</h4>
         {data.recommendations.map((r, i) => (
@@ -247,7 +203,7 @@ export default function AIPanel({ patientId }) {
         ))}
       </div>
 
-      {/* ── Breakdown Table ──────────────────────────────────────── */}
+      {/* ── Breakdown Table ── */}
       <div>
         <button onClick={() => setShowBreakdown(!showBreakdown)}
           style={css({
@@ -257,14 +213,9 @@ export default function AIPanel({ patientId }) {
           })}>
           {showBreakdown ? "▲ Hide" : "▼ View"} AI Scoring Breakdown
         </button>
-
         {showBreakdown && (
           <div style={css({ marginTop: 16 })}>
-            <div style={css({
-              display: "grid", gridTemplateColumns: "160px 90px 1fr 80px",
-              gap: 12, padding: "8px 0",
-              borderBottom: `1px solid ${C.border}`,
-            })}>
+            <div style={css({ display: "grid", gridTemplateColumns: "160px 90px 1fr 80px", gap: 12, padding: "8px 0", borderBottom: `1px solid ${C.border}` })}>
               {["Vital", "Status", "Risk Bar", "Score"].map(h => (
                 <div key={h} style={css({ fontSize: 11, color: C.muted, fontWeight: 700, letterSpacing: 1 })}>{h}</div>
               ))}
@@ -272,10 +223,7 @@ export default function AIPanel({ patientId }) {
             {data.breakdown.map((row, i) => (
               <BreakdownRow key={i} {...row} />
             ))}
-            <div style={css({
-              textAlign: "right", padding: "12px 0",
-              fontSize: 14, fontWeight: 800, color: data.risk_color,
-            })}>
+            <div style={css({ textAlign: "right", padding: "12px 0", fontSize: 14, fontWeight: 800, color: data.risk_color })}>
               Total Risk: {data.risk_score}% — {data.risk_label}
             </div>
           </div>

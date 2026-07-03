@@ -1,13 +1,16 @@
 import axios from "axios";
+
 const API = axios.create({
   baseURL: "https://healnet-web-production.up.railway.app/api",
 });
+
 // ── Auto-attach token to every request ───────────────────────────
 API.interceptors.request.use((config) => {
   const token = localStorage.getItem("healnet_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
+
 // ── Auto-logout on 401 ────────────────────────────────────────────
 API.interceptors.response.use(
   (res) => res,
@@ -20,27 +23,32 @@ API.interceptors.response.use(
     return Promise.reject(err);
   }
 );
+
 // ── AUTH ──────────────────────────────────────────────────────────
 export const authAPI = {
-  login:  (email, password)              => API.post("/auth/login",  { email, password }),
-  signup: (name, email, password, kind)  => API.post("/auth/signup", { name, email, password, kind }),
-  me:     ()                             => API.get("/auth/me"),
+  login:       (email, password)             => API.post("/auth/login",  { email, password }),
+  signup:      (name, email, password, kind) => API.post("/auth/signup", { name, email, password, kind }),
+  me:          ()                            => API.get("/auth/me"),
+  googleLogin: (idToken)                     => API.post("/auth/google", { id_token: idToken }),
 };
+
 // ── PATIENTS ──────────────────────────────────────────────────────
 export const patientsAPI = {
-  getAll:  (registeredBy) => API.get(`/patients/${registeredBy ? `?registered_by=${encodeURIComponent(registeredBy)}` : ""}`),
+  getAll:  ()           => API.get("/patients/"),
   getOne:  (id)         => API.get(`/patients/${id}`),
   create:  (data)       => API.post("/patients/", data),
   update:  (id, data)   => API.put(`/patients/${id}`, data),
   delete:  (id)         => API.delete(`/patients/${id}`),
   search:  (query)      => API.get(`/patients/search/${query}`),
 };
+
 // ── VITALS ────────────────────────────────────────────────────────
 export const vitalsAPI = {
   getForPatient: (id, limit = 20) => API.get(`/vitals/${id}?limit=${limit}`),
   getLatest:     (id)             => API.get(`/vitals/${id}/latest`),
   record:        (data)           => API.post("/vitals/", data),
 };
+
 // ── ALERTS ────────────────────────────────────────────────────────
 export const alertsAPI = {
   getAll:        (unackedOnly = false) => API.get(`/alerts/?unacknowledged_only=${unackedOnly}`),
@@ -48,11 +56,13 @@ export const alertsAPI = {
   acknowledge:   (alertId, ackBy)      => API.patch(`/alerts/${alertId}/acknowledge?ack_by=${ackBy}`),
   stats:         ()                    => API.get("/alerts/stats/summary"),
 };
+
 // ── AI ────────────────────────────────────────────────────────────
 export const aiAPI = {
   analyze:       (patientId) => API.get(`/ai/${patientId}`),
   analyzeCustom: (data)      => API.post("/ai/analyze", data),
 };
+
 // ── PUPIL ─────────────────────────────────────────────────────────
 export const pupilAPI = {
   analyzeSingle: (file) => {
@@ -67,37 +77,14 @@ export const pupilAPI = {
     return API.post("/pupil/analyze-both", form);
   },
 };
-<<<<<<< Updated upstream
-// ── SMARTWATCH ────────────────────────────────────────────────────
-// Matches backend/routes/smartwatch.py endpoints
-export const smartwatchAPI = {
-  uploadCSV: (file) => {
-=======
 
 // ── SMARTWATCH ────────────────────────────────────────────────────
 export const smartwatchAPI = {
-  uploadCSV:        (file) => {
->>>>>>> Stashed changes
+  uploadCSV: (file) => {
     const form = new FormData();
     form.append("file", file);
     return API.post("/smartwatch/upload-csv", form);
   },
-<<<<<<< Updated upstream
-  googleFitStatus:   ()              => API.get("/smartwatch/google-fit/status"),
-  googleFitAuthUrl:  ()              => API.get("/smartwatch/google-fit/auth-url"),
-  googleFitExchange: (code)          => API.post("/smartwatch/google-fit/exchange", { code }),
-  googleFitData:     (token, days)   => API.post("/smartwatch/google-fit/data", { token, days }),
-};
-// ── APPLE HEALTH ──────────────────────────────────────────────────
-// NOTE: backend/routes/apple_health.py does not exist yet.
-// This calls a placeholder endpoint so the app builds and runs;
-// it will safely fail with a normal network error until the
-// corresponding backend route is added (the UI already handles
-// this via cached-data fallback in offline mode).
-export const appleHealthAPI = {
-  getData: (userId, days) => API.get(`/apple-health/data?user_id=${userId}&days=${days}`),
-};
-=======
   googleFitStatus:  ()            => API.get("/smartwatch/google-fit/status"),
   googleFitAuthUrl: ()            => API.get("/smartwatch/google-fit/auth-url"),
   googleFitExchange:(code)        => API.post("/smartwatch/google-fit/exchange", { code }),
@@ -106,9 +93,8 @@ export const appleHealthAPI = {
 
 // ── APPLE HEALTH ──────────────────────────────────────────────────
 export const appleHealthAPI = {
-  getData:    (userId, days) => API.get(`/smartwatch/apple-health/data?user_id=${userId}&days=${days}`),
-  webhook:    (data)         => API.post("/smartwatch/apple-health/webhook", data),
+  getData: (userId, days) => API.get(`/smartwatch/apple-health/data?user_id=${userId}&days=${days}`),
+  webhook: (data)         => API.post("/smartwatch/apple-health/webhook", data),
 };
 
->>>>>>> Stashed changes
 export default API;

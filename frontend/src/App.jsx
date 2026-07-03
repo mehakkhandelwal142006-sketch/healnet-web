@@ -1,20 +1,12 @@
-// build: offline-mode-v1 — forces a fresh Vercel build of the full dependency tree
 import { useState, useEffect, useCallback } from "react";
 import { authAPI, patientsAPI, vitalsAPI, alertsAPI } from "./services/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { GoogleAuth } from "@codetrix-studio/capacitor-google-auth";
 import AIPanel        from "./pages/AIPanel";
 import PupilPage      from "./pages/PupilPage";
 import CameraPage     from "./pages/CameraPage";
 import SmartWatchPage from "./pages/smartwatch";
 
-<<<<<<< Updated upstream:frontend/src/App.jsx
-import { useNetwork }     from "./offline/useNetwork";
-import { OfflineBanner, NetworkTestToggle } from "./offline/OfflineBanner";
-import { cachePatients, getCachedPatients } from "./offline/offlineStore";
-
-// ── THEME ─────────────────────────────────────────────────────────
-=======
->>>>>>> Stashed changes:frontend/src/app.jsx
 const C = {
   bg:     "#030c2c",
   card:   "#04163c",
@@ -78,6 +70,28 @@ function LoginPage({ onLogin }) {
   const [error, setError]       = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  useEffect(() => {
+    GoogleAuth.initialize({
+      clientId: "560479363796-6c16e4olgj39bcplh8r0egc2d5klb0gv.apps.googleusercontent.com",
+      scopes: ["profile", "email"],
+      grantOfflineAccess: true,
+    });
+  }, []);
+
+  async function handleGoogleLogin() {
+    setError(""); setLoading(true);
+    try {
+      const googleUser = await GoogleAuth.signIn();
+      const res = await authAPI.googleLogin(googleUser.authentication.idToken);
+      localStorage.setItem("healnet_token", res.data.token);
+      localStorage.setItem("healnet_user", JSON.stringify(res.data.user));
+      onLogin(res.data.user);
+    } catch (e) {
+      setError("Google sign-in failed. Please try again.");
+    }
+    setLoading(false);
+  }
 
   async function handleSubmit() {
     setError(""); setLoading(true);
@@ -144,6 +158,30 @@ function LoginPage({ onLogin }) {
               style={css({ padding: "13px", borderRadius: 10, border: "none", background: loading ? "rgba(59,201,232,0.3)" : C.accent, color: C.bg, fontWeight: 700, fontSize: 15, cursor: loading ? "not-allowed" : "pointer", transition: "all 0.2s", marginTop: 4 })}>
               {loading ? "Please wait..." : mode === "login" ? "Log In →" : "Create Account →"}
             </button>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0" }}>
+              <div style={{ flex: 1, height: 1, background: C.border }} />
+              <span style={{ color: C.muted, fontSize: 12 }}>OR</span>
+              <div style={{ flex: 1, height: 1, background: C.border }} />
+            </div>
+
+            <button onClick={handleGoogleLogin} disabled={loading} type="button"
+              style={css({
+                padding: "12px", borderRadius: 10,
+                border: `1px solid ${C.border}`,
+                background: "rgba(255,255,255,0.04)",
+                color: C.text, fontWeight: 600, fontSize: 14,
+                cursor: loading ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+              })}>
+              <svg width="18" height="18" viewBox="0 0 48 48">
+                <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.1 8 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.5-.4-3.5z"/>
+                <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 16 18.9 13 24 13c3.1 0 5.9 1.1 8 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+                <path fill="#4CAF50" d="M24 44c5.5 0 10.5-2.1 14.3-5.6l-6.6-5.6C29.6 34.6 26.9 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.6 5.1C9.6 39.6 16.3 44 24 44z"/>
+                <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.3-4.1 5.8l6.6 5.6C41.9 36.3 44 30.6 44 24c0-1.3-.1-2.5-.4-3.5z"/>
+              </svg>
+              Sign in with Google
+            </button>
           </div>
         </Card>
       </div>
@@ -154,15 +192,6 @@ function LoginPage({ onLogin }) {
 // ═══════════════════════════════════════════════════════════════════
 //  DASHBOARD
 // ═══════════════════════════════════════════════════════════════════
-<<<<<<< Updated upstream:frontend/src/App.jsx
-function Dashboard({ user, onLogout, network }) {
-  const [page, setPage]         = useState("overview");
-  const [patients, setPatients] = useState([]);
-  const [alerts, setAlerts]     = useState([]);
-  const [stats, setStats]       = useState(null);
-  const [loading, setLoading]   = useState(true);
-  const [search, setSearch]     = useState("");
-=======
 function Dashboard({ user, onLogout }) {
   const [page, setPage]             = useState("overview");
   const [patients, setPatients]     = useState([]);
@@ -170,7 +199,6 @@ function Dashboard({ user, onLogout }) {
   const [stats, setStats]           = useState(null);
   const [loading, setLoading]       = useState(true);
   const [search, setSearch]         = useState("");
->>>>>>> Stashed changes:frontend/src/app.jsx
   const [selPatient, setSelPatient] = useState(null);
   const [vitals, setVitals]         = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -187,27 +215,13 @@ function Dashboard({ user, onLogout }) {
         alertsAPI.stats(),
       ]);
       setPatients(pRes.data);
-      cachePatients(pRes.data); // ← save for offline use
       setAlerts(aRes.data);
       setStats(sRes.data);
-    } catch (e) {
-      console.error(e);
-      // Offline fallback: load patients from cache so the app doesn't sit empty
-      const cached = getCachedPatients();
-      if (cached.length) setPatients(cached);
-    }
+    } catch (e) { console.error(e); }
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  // When the network comes back online and a sync completes, refresh data
-  useEffect(() => {
-    if (network.isOnline && !network.syncing) {
-      load();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [network.isOnline, network.syncing]);
 
   async function openPatient(p) {
     setSelPatient(p); setPage("patient");
@@ -244,26 +258,21 @@ function Dashboard({ user, onLogout }) {
   return (
     <div style={css({ minHeight: "100vh", background: C.bg, display: "flex", fontFamily: "'Segoe UI', sans-serif", color: C.text, flexDirection: mobile ? "column" : "row", position: "relative" })}>
 
-      {/* ── MOBILE TOP BAR — hamburger on LEFT ──────────────────── */}
       {mobile && (
         <div style={css({ background: C.card, borderBottom: `1px solid ${C.border}`, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 200 })}>
-          {/* ☰ hamburger on LEFT */}
           <button onClick={() => setSidebarOpen(o => !o)}
             style={css({ background: "none", border: `1px solid ${C.border}`, color: C.accent, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 18 })}>
             {sidebarOpen ? "✕" : "☰"}
           </button>
-          {/* Logo in centre/right */}
           <div style={css({ fontSize: 18, fontWeight: 800, color: C.accent })}>🩺 HealNet</div>
         </div>
       )}
 
-      {/* ── SIDEBAR OVERLAY ─────────────────────────────────────── */}
       {mobile && sidebarOpen && (
         <div onClick={() => setSidebarOpen(false)}
           style={css({ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 150 })} />
       )}
 
-      {/* ── SIDEBAR ─────────────────────────────────────────────── */}
       <div style={css({
         width: mobile ? 260 : 230,
         background: C.card, borderRight: `1px solid ${C.border}`,
@@ -303,13 +312,11 @@ function Dashboard({ user, onLogout }) {
         </div>
       </div>
 
-      {/* ── MAIN CONTENT ────────────────────────────────────────── */}
       <div style={css({ flex: 1, padding: mobile ? "16px" : "32px", overflowY: "auto", minWidth: 0 })}>
         {loading ? (
           <div style={css({ color: C.muted, textAlign: "center", paddingTop: 80, fontSize: 18 })}>Loading HealNet...</div>
         ) : (
           <>
-            {/* ── OVERVIEW ────────────────────────────────────────── */}
             {page === "overview" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>Good day, {user.name} 👋</h2>
@@ -329,7 +336,6 @@ function Dashboard({ user, onLogout }) {
                 </div>
                 <Card>
                   <h3 style={css({ margin: "0 0 16px", color: C.accent })}>Recent Patients</h3>
-                  {/* ── SCROLLER for recent patients list ── */}
                   <div style={css({ maxHeight: 320, overflowY: "auto", paddingRight: 4 })}>
                     {patients.slice(0, 5).map(p => (
                       <div key={p.patient_id} onClick={() => openPatient(p)}
@@ -349,23 +355,15 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── PATIENTS ──────────────────────────────────────── */}
             {page === "patients" && (
               <div>
-<<<<<<< Updated upstream:frontend/src/App.jsx
-                <div style={css({ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 })}>
-                  <h2 style={css({ margin: 0, fontSize: 24 })}>Patients</h2>
-                  <AddPatientForm onAdded={load} disabled={!network.isOnline} />
-=======
                 <div style={css({ display: "flex", justifyContent: "space-between", alignItems: mobile ? "flex-start" : "center", flexDirection: mobile ? "column" : "row", gap: mobile ? 12 : 0, marginBottom: 24 })}>
                   <h2 style={css({ margin: 0, fontSize: mobile ? 18 : 24 })}>Patients</h2>
                   <AddPatientForm onAdded={load} />
->>>>>>> Stashed changes:frontend/src/app.jsx
                 </div>
                 <input placeholder="🔍  Search by name or ID..." value={search} onChange={e => setSearch(e.target.value)}
                   style={css({ width: "100%", maxWidth: mobile ? "100%" : 360, padding: "10px 16px", borderRadius: 10, background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`, color: C.text, fontSize: 14, outline: "none", marginBottom: 20, boxSizing: "border-box", fontFamily: "inherit" })} />
                 {mobile ? (
-                  /* ── SCROLLER for patient cards on mobile ── */
                   <div style={css({ display: "flex", flexDirection: "column", gap: 12, maxHeight: "70vh", overflowY: "auto", paddingRight: 2 })}>
                     {filtered.map(p => (
                       <Card key={p.patient_id} style={{ padding: 16 }}>
@@ -386,7 +384,6 @@ function Dashboard({ user, onLogout }) {
                   </div>
                 ) : (
                   <Card style={{ padding: 0 }}>
-                    {/* ── SCROLLER for patient table on desktop ── */}
                     <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
                       <table style={css({ width: "100%", borderCollapse: "collapse", fontSize: 14 })}>
                         <thead style={{ position: "sticky", top: 0, background: C.card, zIndex: 1 }}>
@@ -419,7 +416,6 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── PATIENT DETAIL ────────────────────────────────── */}
             {page === "patient" && selPatient && (
               <div>
                 <button onClick={() => setPage("patients")} style={css({ background: "none", border: "none", color: C.accent, cursor: "pointer", fontSize: 14, marginBottom: 20 })}>
@@ -428,7 +424,6 @@ function Dashboard({ user, onLogout }) {
                 <div style={css({ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 2fr", gap: 20, marginBottom: 20 })}>
                   <Card>
                     <h3 style={css({ margin: "0 0 16px", color: C.accent })}>Patient Info</h3>
-                    {/* ── SCROLLER for patient info ── */}
                     <div style={{ maxHeight: mobile ? 300 : 400, overflowY: "auto", paddingRight: 4 }}>
                       {[
                         ["ID",        selPatient.patient_id],
@@ -488,18 +483,15 @@ function Dashboard({ user, onLogout }) {
                   </Card>
                 </div>
                 <AddVitalForm patientId={selPatient.patient_id} onAdded={() => openPatient(selPatient)} />
-                {/* ── SCROLLER for AI panel ── */}
                 <div style={css({ marginTop: 20, maxHeight: mobile ? "70vh" : "none", overflowY: mobile ? "auto" : "visible" })}>
                   <AIPanel patientId={selPatient.patient_id} />
                 </div>
               </div>
             )}
 
-            {/* ── ALERTS ────────────────────────────────────────── */}
             {page === "alerts" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>Alerts</h2>
-                {/* ── SCROLLER for alerts ── */}
                 <div style={css({ display: "flex", flexDirection: "column", gap: 12, maxHeight: mobile ? "75vh" : "none", overflowY: mobile ? "auto" : "visible" })}>
                   {alerts.map(a => (
                     <Card key={a.id} style={{ borderColor: a.category === "Critical" ? C.danger + "66" : C.warn + "66", padding: mobile ? 14 : 24 }}>
@@ -526,7 +518,6 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── ADD VITALS ────────────────────────────────────── */}
             {page === "vitals" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>Record Vitals</h2>
@@ -536,7 +527,6 @@ function Dashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* ── AI INSIGHTS ───────────────────────────────────── */}
             {page === "ai" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>🤖 AI Insights</h2>
@@ -547,7 +537,6 @@ function Dashboard({ user, onLogout }) {
                     {patients.map(p => <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>)}
                   </select>
                 </div>
-                {/* ── SCROLLER for AI insights ── */}
                 <div style={{ maxHeight: mobile ? "65vh" : "none", overflowY: mobile ? "auto" : "visible", paddingRight: mobile ? 2 : 0 }}>
                   {selPatient
                     ? <AIPanel patientId={selPatient.patient_id} />
@@ -570,7 +559,7 @@ function Dashboard({ user, onLogout }) {
 // ═══════════════════════════════════════════════════════════════════
 //  FORMS
 // ═══════════════════════════════════════════════════════════════════
-function AddPatientForm({ onAdded, disabled }) {
+function AddPatientForm({ onAdded }) {
   const [open, setOpen]       = useState(false);
   const [form, setForm]       = useState({ patient_id:"", name:"", age:"", gender:"Male", blood_group:"", contact:"", email:"" });
   const [loading, setLoading] = useState(false);
@@ -593,20 +582,8 @@ function AddPatientForm({ onAdded, disabled }) {
   const inputS = css({ width:"100%", padding:"10px 14px", borderRadius:8, background:"rgba(59,201,232,0.07)", border:`1px solid ${C.border}`, color:C.text, fontSize:14, outline:"none", boxSizing:"border-box", fontFamily:"inherit" });
 
   if (!open) return (
-<<<<<<< Updated upstream:frontend/src/App.jsx
-    <button onClick={() => !disabled && setOpen(true)} disabled={disabled}
-      title={disabled ? "Adding patients requires an internet connection" : undefined}
-      style={css({
-        padding: "10px 20px", borderRadius: 10, border: "none",
-        background: disabled ? "rgba(59,201,232,0.3)" : C.accent,
-        color: C.bg, fontWeight: 700,
-        cursor: disabled ? "not-allowed" : "pointer",
-      })}>
-      {disabled ? "📵 Offline" : "+ Add Patient"}
-=======
     <button onClick={() => setOpen(true)} style={css({ padding:"10px 20px", borderRadius:10, border:"none", background:C.accent, color:C.bg, fontWeight:700, cursor:"pointer", fontSize: mobile ? 13 : 15 })}>
       + Add Patient
->>>>>>> Stashed changes:frontend/src/app.jsx
     </button>
   );
 
@@ -724,32 +701,8 @@ export default function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("healnet_user")); } catch { return null; }
   });
-<<<<<<< Updated upstream:frontend/src/App.jsx
-
-  const network = useNetwork();
-
-  function handleLogin(u)  { setUser(u); }
-  function handleLogout()  {
-    localStorage.removeItem("healnet_token");
-    localStorage.removeItem("healnet_user");
-    setUser(null);
-  }
-
-  return (
-    <>
-      <OfflineBanner {...network} onSync={network.syncNow} />
-      <NetworkTestToggle forceOffline={network.forceOffline} setForceOffline={network.setForceOffline} />
-      {!user
-        ? <LoginPage onLogin={handleLogin} />
-        : <Dashboard user={user} onLogout={handleLogout} network={network} />
-      }
-    </>
-  );
-}
-=======
   function handleLogin(u)  { setUser(u); }
   function handleLogout()  { localStorage.removeItem("healnet_token"); localStorage.removeItem("healnet_user"); setUser(null); }
   if (!user) return <LoginPage onLogin={handleLogin} />;
   return <Dashboard user={user} onLogout={handleLogout} />;
 }
->>>>>>> Stashed changes:frontend/src/app.jsx
