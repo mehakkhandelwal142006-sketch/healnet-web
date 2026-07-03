@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { authAPI, patientsAPI, vitalsAPI, alertsAPI } from "./services/api";
+import { authAPI, patientsAPI, vitalsAPI, alertsAPI, symptomsAPI, medicationsAPI } from "./services/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import AIPanel        from "./pages/AIPanel";
 import PupilPage      from "./pages/PupilPage";
@@ -65,14 +65,21 @@ function EyeIcon({ open, color }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  TIMELINE PAGE (inline — no separate file needed)
+//  TIMELINE PAGE (inline)
 // ═══════════════════════════════════════════════════════════════════
 function TimelinePage({ patientId, patientName }) {
-  const [vitals, setVitals]   = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState("");
+  const [vitals, setVitals]     = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState("");
+  const [logTab, setLogTab]     = useState("symptom");
+  const [symptomForm, setSymptomForm] = useState({ symptom: "", severity: "mild", notes: "" });
+  const [medForm, setMedForm]         = useState({ medication_name: "", dosage: "", notes: "" });
+  const [logMsg, setLogMsg]     = useState("");
+  const [logLoading, setLogLoading] = useState(false);
   const width  = useWindowWidth();
   const mobile = width < 768;
+
+  const inputS = css({ width:"100%", padding:"10px 14px", borderRadius:8, background:"rgba(59,201,232,0.07)", border:`1px solid ${C.border}`, color:C.text, fontSize:14, outline:"none", boxSizing:"border-box", fontFamily:"inherit" });
 
   useEffect(() => {
     setLoading(true);
@@ -81,88 +88,153 @@ function TimelinePage({ patientId, patientName }) {
       .catch(() => { setError("Could not load vitals."); setLoading(false); });
   }, [patientId]);
 
-  if (loading) return <div style={{ color: C.muted, textAlign: "center", padding: 60 }}>Loading timeline...</div>;
-  if (error)   return <div style={{ color: C.danger, textAlign: "center", padding: 60 }}>{error}</div>;
-  if (!vitals.length) return (
-    <div style={{ color: C.muted, textAlign: "center", padding: 60 }}>
-      No vitals recorded yet for {patientName}.
-    </div>
-  );
+  async function logSymptom() {
+    if (!symptomForm.symptom) { setLogMsg("Symptom name is required"); return; }
+    setLogLoading(true); setLogMsg("");
+    try {
+      await symptomsAPI.record({ patient_id: patientId, ...symptomForm });
+      setLogMsg("✅ Symptom logged.");
+      setSymptomForm({ symptom: "", severity: "mild", notes: "" });
+    } catch (e) { setLogMsg(e.response?.data?.detail || "Error logging symptom"); }
+    setLogLoading(false);
+  }
+
+  async function logMedication() {
+    if (!medForm.medication_name) { setLogMsg("Medication name is required"); return; }
+    setLogLoading(true); setLogMsg("");
+    try {
+      await medicationsAPI.record({ patient_id: patientId, ...medForm });
+      setLogMsg("✅ Medication logged.");
+      setMedForm({ medication_name: "", dosage: "", notes: "" });
+    } catch (e) { setLogMsg(e.response?.data?.detail || "Error logging medication"); }
+    setLogLoading(false);
+  }
 
   const vitalDefs = [
-    { key: "heart_rate",   label: "Heart Rate",   unit: "bpm",   color: C.danger,  icon: "❤️"  },
-    { key: "spo2",         label: "SpO2",          unit: "%",     color: C.accent,  icon: "🫁"  },
-    { key: "temperature",  label: "Temperature",   unit: "°C",    color: C.warn,    icon: "🌡️" },
-    { key: "systolic_bp",  label: "Systolic BP",   unit: "mmHg",  color: C.accent2, icon: "💉"  },
-    { key: "blood_sugar",  label: "Blood Sugar",   unit: "mg/dL", color: "#a78bfa", icon: "🩸"  },
+    { key: "heart_rate",   label: "Heart Rate",  unit: "bpm",   color: C.danger,  icon: "❤️"  },
+    { key: "spo2",         label: "SpO2",         unit: "%",     color: C.accent,  icon: "🫁"  },
+    { key: "temperature",  label: "Temperature",  unit: "°C",    color: C.warn,    icon: "🌡️" },
+    { key: "systolic_bp",  label: "Systolic BP",  unit: "mmHg",  color: C.accent2, icon: "💉"  },
+    { key: "blood_sugar",  label: "Blood Sugar",  unit: "mg/dL", color: "#a78bfa", icon: "🩸"  },
   ];
 
   return (
     <div>
       <h2 style={{ margin: "0 0 6px", fontSize: mobile ? 18 : 22 }}>🕓 Health Timeline</h2>
       <p style={{ color: C.muted, fontSize: 13, marginBottom: 24 }}>
-        Patient: <strong style={{ color: C.text }}>{patientName}</strong> · Last {vitals.length} readings
+        Patient: <strong style={{ color: C.text }}>{patientName}</strong>
       </p>
 
-      {/* Charts */}
-      <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 24 }}>
-        {vitalDefs.map(v => {
-          const data = vitals.filter(r => r[v.key] != null);
-          if (!data.length) return null;
-          return (
-            <Card key={v.key} style={{ padding: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: v.color, marginBottom: 12 }}>
-                {v.icon} {v.label}
-              </div>
-              <ResponsiveContainer width="100%" height={120}>
-                <LineChart data={data}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                  <XAxis dataKey="recorded_at" tickFormatter={d => new Date(d).toLocaleDateString()} stroke={C.muted} tick={{ fontSize: 9 }} />
-                  <YAxis stroke={C.muted} tick={{ fontSize: 9 }} />
-                  <Tooltip
-                    contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 11 }}
-                    labelFormatter={d => new Date(d).toLocaleString()}
-                    formatter={val => [`${val} ${v.unit}`, v.label]}
-                  />
-                  <Line type="monotone" dataKey={v.key} stroke={v.color} dot={{ r: 3, fill: v.color }} strokeWidth={2} name={v.label} />
-                </LineChart>
-              </ResponsiveContainer>
-            </Card>
-          );
-        })}
-      </div>
-
-      {/* Timeline list */}
-      <Card style={{ padding: 0 }}>
-        <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.border}` }}>
-          <div style={{ fontWeight: 700, color: C.text, fontSize: 14 }}>📋 All Readings</div>
-        </div>
-        <div style={{ maxHeight: 400, overflowY: "auto" }}>
-          {[...vitals].reverse().map((v, i) => (
-            <div key={i} style={{
-              padding: "14px 20px", borderBottom: `1px solid ${C.border}44`,
-              display: "flex", alignItems: "flex-start", gap: 14,
-            }}>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.accent, marginTop: 5, flexShrink: 0 }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>
-                  {new Date(v.recorded_at).toLocaleString()} · {v.source || "manual"}
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {vitalDefs.map(d => v[d.key] != null ? (
-                    <span key={d.key} style={{
-                      background: d.color + "18", border: `1px solid ${d.color}44`,
-                      borderRadius: 6, padding: "2px 8px", fontSize: 12, color: d.color, fontWeight: 600,
-                    }}>
-                      {d.icon} {v[d.key]} {d.unit}
-                    </span>
-                  ) : null)}
-                </div>
-              </div>
-            </div>
+      {/* ── Quick Log Forms ─────────────────────────────────────── */}
+      <Card style={{ marginBottom: 24, padding: 20 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          {[["symptom", "🩹 Log Symptom"], ["medication", "💊 Log Medication"]].map(([k, label]) => (
+            <button key={k} onClick={() => { setLogTab(k); setLogMsg(""); }}
+              style={{ flex: 1, padding: "9px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13, background: logTab === k ? C.accent : "rgba(59,201,232,0.08)", color: logTab === k ? C.bg : C.muted }}>
+              {label}
+            </button>
           ))}
         </div>
+        {logTab === "symptom" ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <input placeholder="Symptom (e.g. headache, fatigue)" value={symptomForm.symptom}
+              onChange={e => setSymptomForm(f => ({ ...f, symptom: e.target.value }))} style={inputS} />
+            <select value={symptomForm.severity} onChange={e => setSymptomForm(f => ({ ...f, severity: e.target.value }))} style={inputS}>
+              <option value="mild">Mild</option>
+              <option value="moderate">Moderate</option>
+              <option value="severe">Severe</option>
+            </select>
+            <input placeholder="Notes (optional)" value={symptomForm.notes}
+              onChange={e => setSymptomForm(f => ({ ...f, notes: e.target.value }))} style={inputS} />
+            <button onClick={logSymptom} disabled={logLoading}
+              style={{ padding: "10px", borderRadius: 8, border: "none", background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer" }}>
+              {logLoading ? "Saving..." : "Log Symptom"}
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <input placeholder="Medication name" value={medForm.medication_name}
+              onChange={e => setMedForm(f => ({ ...f, medication_name: e.target.value }))} style={inputS} />
+            <input placeholder="Dosage (e.g. 500mg)" value={medForm.dosage}
+              onChange={e => setMedForm(f => ({ ...f, dosage: e.target.value }))} style={inputS} />
+            <input placeholder="Notes (optional)" value={medForm.notes}
+              onChange={e => setMedForm(f => ({ ...f, notes: e.target.value }))} style={inputS} />
+            <button onClick={logMedication} disabled={logLoading}
+              style={{ padding: "10px", borderRadius: 8, border: "none", background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer" }}>
+              {logLoading ? "Saving..." : "Log Medication"}
+            </button>
+          </div>
+        )}
+        {logMsg && (
+          <div style={{ marginTop: 10, fontSize: 13, color: logMsg.startsWith("✅") ? C.accent2 : C.danger }}>
+            {logMsg}
+          </div>
+        )}
       </Card>
+
+      {/* ── Vitals Charts ────────────────────────────────────────── */}
+      {loading ? (
+        <div style={{ color: C.muted, textAlign: "center", padding: 60 }}>Loading timeline...</div>
+      ) : error ? (
+        <div style={{ color: C.danger, textAlign: "center", padding: 60 }}>{error}</div>
+      ) : !vitals.length ? (
+        <div style={{ color: C.muted, textAlign: "center", padding: 60 }}>No vitals recorded yet for {patientName}.</div>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 24 }}>
+            {vitalDefs.map(v => {
+              const data = vitals.filter(r => r[v.key] != null);
+              if (!data.length) return null;
+              return (
+                <Card key={v.key} style={{ padding: 16 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: v.color, marginBottom: 12 }}>
+                    {v.icon} {v.label}
+                  </div>
+                  <ResponsiveContainer width="100%" height={120}>
+                    <LineChart data={data}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                      <XAxis dataKey="recorded_at" tickFormatter={d => new Date(d).toLocaleDateString()} stroke={C.muted} tick={{ fontSize: 9 }} />
+                      <YAxis stroke={C.muted} tick={{ fontSize: 9 }} />
+                      <Tooltip
+                        contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 11 }}
+                        labelFormatter={d => new Date(d).toLocaleString()}
+                        formatter={val => [`${val} ${v.unit}`, v.label]}
+                      />
+                      <Line type="monotone" dataKey={v.key} stroke={v.color} dot={{ r: 3, fill: v.color }} strokeWidth={2} name={v.label} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </Card>
+              );
+            })}
+          </div>
+
+          {/* ── Timeline list ──────────────────────────────────── */}
+          <Card style={{ padding: 0 }}>
+            <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ fontWeight: 700, color: C.text, fontSize: 14 }}>📋 All Readings</div>
+            </div>
+            <div style={{ maxHeight: 400, overflowY: "auto" }}>
+              {[...vitals].reverse().map((v, i) => (
+                <div key={i} style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}44`, display: "flex", alignItems: "flex-start", gap: 14 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.accent, marginTop: 5, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>
+                      {new Date(v.recorded_at).toLocaleString()} · {v.source || "manual"}
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {vitalDefs.map(d => v[d.key] != null ? (
+                        <span key={d.key} style={{ background: d.color + "18", border: `1px solid ${d.color}44`, borderRadius: 6, padding: "2px 8px", fontSize: 12, color: d.color, fontWeight: 600 }}>
+                          {d.icon} {v[d.key]} {d.unit}
+                        </span>
+                      ) : null)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
