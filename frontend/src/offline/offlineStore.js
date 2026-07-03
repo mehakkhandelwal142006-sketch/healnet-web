@@ -8,6 +8,7 @@
  *   healnet_pending_vitals      → Array<{ id, patientId, payload, queuedAt }>
  *   healnet_wearable_cache      → { summary, data, source, total_records, savedAt }
  *   healnet_patients_cache      → { patients: [], savedAt }
+ *   healnet_ai_cache            → { [patientId]: { result, savedAt } }
  *
  * Nothing here touches the network — it is purely read/write to
  * localStorage so every function is synchronous and safe to call
@@ -30,7 +31,6 @@ function write(key, value) {
     localStorage.setItem(key, JSON.stringify(value));
     return true;
   } catch {
-    // localStorage quota exceeded or private-browsing restriction
     return false;
   }
 }
@@ -58,14 +58,12 @@ export function cacheVitals(patientId, vitalsArray) {
 
 export function getCachedVitals(patientId) {
   const all = read("healnet_vitals_cache") ?? {};
-  return all[patientId] ?? null;   // { data, savedAt } | null
+  return all[patientId] ?? null;
 }
 
 export function getCachedVitalsSummary(patientId) {
   const entry = getCachedVitals(patientId);
   if (!entry || !entry.data?.length) return null;
-
-  // Latest reading — most recent by recorded_at or array tail
   const sorted = [...entry.data].sort(
     (a, b) => new Date(b.recorded_at) - new Date(a.recorded_at)
   );
@@ -114,15 +112,25 @@ export function cacheWearableResult(result) {
 }
 
 export function getCachedWearableResult() {
-  return read("healnet_wearable_cache"); // null if never cached
+  return read("healnet_wearable_cache");
 }
 
-// ── Offline-aware alert evaluator (mirrors SmartWatchPage logic) ──
-// Kept here so Alerts work without importing from SmartWatchPage
+// ── AI result cache (AIPanel) ─────────────────────────────────────
+export function cacheAIResult(patientId, result) {
+  const all = read("healnet_ai_cache") ?? {};
+  all[patientId] = { result, savedAt: Date.now() };
+  write("healnet_ai_cache", all);
+}
+
+export function getCachedAIResult(patientId) {
+  const all = read("healnet_ai_cache") ?? {};
+  return all[patientId] ?? null; // { result, savedAt } | null
+}
+
+// ── Offline-aware alert evaluator ─────────────────────────────────
 export function evaluateOfflineAlerts(summary) {
   if (!summary) return [];
   const alerts = [];
-
   const { avg_heart_rate: hr, avg_spo2: spo, avg_systolic_bp: sys } = summary;
 
   if (hr != null) {
@@ -149,7 +157,6 @@ export function evaluateOfflineAlerts(summary) {
       alerts.push({ vital: "systolic_bp", value: sys, level: "warning",
         message: `Avg BP ${sys} mmHg needs attention.` });
   }
-
   return alerts;
 }
 
@@ -164,4 +171,3 @@ export function timeAgo(ts) {
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
 }
-
