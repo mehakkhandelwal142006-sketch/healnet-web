@@ -80,6 +80,11 @@ export const appleHealthAPI = {
   getData:  (userId, days) => API.get(`/smartwatch/apple-health/data?user_id=${userId}&days=${days}`),
   webhook:  (data)         => API.post("/smartwatch/apple-health/webhook", data),
 };
+// ── HEALTH SCORE ──────────────────────────────────────────────────
+export const healthScoreAPI = {
+  getScore:   (patientId)            => API.get(`/health-score/${patientId}`),
+  getHistory: (patientId, days = 30) => API.get(`/health-score/${patientId}/history?days=${days}`),
+};
 // ── SYMPTOMS ──────────────────────────────────────────────────────
 export const symptomsAPI = {
   getForPatient: (id, limit = 50) => API.get(`/symptoms/${id}?limit=${limit}`),
