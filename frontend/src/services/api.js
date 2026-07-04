@@ -28,7 +28,7 @@ export const authAPI = {
 };
 // ── PATIENTS ──────────────────────────────────────────────────────
 export const patientsAPI = {
-  getAll:  (registeredBy) => API.get(`/patients/${registeredBy ? `?registered_by=${encodeURIComponent(registeredBy)}` : ""}`),
+  getAll:  (registeredBy) => API.get(registeredBy ? `/patients/?registered_by=${encodeURIComponent(registeredBy)}` : "/patients/"),
   getOne:  (id)           => API.get(`/patients/${id}`),
   create:  (data)         => API.post("/patients/", data),
   update:  (id, data)     => API.put(`/patients/${id}`, data),
