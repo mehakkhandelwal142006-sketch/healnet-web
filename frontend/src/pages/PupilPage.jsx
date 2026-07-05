@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { pupilAPI } from "../services/api";
+import { pupilAPI, symptomsAPI, patientsAPI } from "../services/api";
 
 const C = {
   bg: "#030c2c", card: "#04163c", border: "rgba(59,201,232,0.18)",
@@ -18,9 +18,7 @@ function PIRBar({ pir }) {
         <span>Constricted</span><span>Normal</span><span>Dilated</span>
       </div>
       <div style={css({ background: "rgba(255,255,255,0.07)", borderRadius: 6, height: 10, position: "relative" })}>
-        {/* Normal zone highlight */}
         <div style={css({ position: "absolute", left: "20%", width: "25%", height: "100%", background: "rgba(0,245,160,0.15)", borderRadius: 4 })} />
-        {/* Indicator */}
         <div style={css({ position: "absolute", left: `${pct}%`, top: -3, width: 4, height: 16, background: color, borderRadius: 2, transform: "translateX(-50%)", transition: "left 0.5s ease" })} />
       </div>
       <div style={css({ textAlign: "center", marginTop: 6, fontSize: 13, fontWeight: 700, color })}>
@@ -33,7 +31,7 @@ function PIRBar({ pir }) {
 // ── Severity badge ────────────────────────────────────────────────
 function SevBadge({ severity }) {
   const map = {
-    NORMAL:   C.accent2, MILD: C.warn,
+    NORMAL: C.accent2, MILD: C.warn,
     MODERATE: "#f57c00", SEVERE: C.danger, ERROR: C.muted
   };
   const color = map[severity] || C.muted;
@@ -47,95 +45,152 @@ function SevBadge({ severity }) {
   );
 }
 
+// ── Save banner (auto-save with discard) ──────────────────────────
+function SaveBanner({ result, patientId, label, onSaved, onDiscard }) {
+  const [saving, setSaving]   = useState(false);
+  const [saved, setSaved]     = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+  const [discarded, setDiscarded] = useState(false);
+
+  if (discarded) return null;
+  if (saved) return (
+    <div style={{ background: "rgba(0,245,160,0.08)", border: "1px solid rgba(0,245,160,0.3)",
+      borderRadius: 10, padding: "12px 18px", marginBottom: 16, display: "flex",
+      alignItems: "center", gap: 10, fontSize: 13, color: C.accent2 }}>
+      ✅ Pupil result saved to patient record.
+    </div>
+  );
+
+  async function save() {
+    if (!patientId) { setSaveMsg("Select a patient first to save results."); return; }
+    setSaving(true); setSaveMsg("");
+    try {
+      const severityMap = { NORMAL: "mild", MILD: "mild", MODERATE: "moderate", SEVERE: "severe" };
+      const sym = result.severity || "NORMAL";
+      const pir = result.pupil_iris_ratio?.toFixed(3) || "—";
+      const flags = [
+        result.is_dilated     && "dilated (Mydriasis)",
+        result.is_constricted && "constricted (Miosis)",
+        result.is_irregular   && "irregular shape",
+      ].filter(Boolean).join(", ") || "no flags";
+
+      await symptomsAPI.record({
+        patient_id: patientId,
+        symptom: `Pupil analysis (${label}): ${sym} — PIR ${pir}`,
+        severity: severityMap[sym] || "mild",
+        notes: `Flags: ${flags}. Confidence: ${result.confidence}%. Quality: ${result.quality_grade}. ` +
+               (result.clinical_notes?.length ? `Notes: ${result.clinical_notes.join("; ")}` : ""),
+      });
+      setSaved(true);
+      if (onSaved) onSaved();
+    } catch (e) {
+      setSaveMsg(e.response?.data?.detail || "Failed to save. Try again.");
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div style={{ background: "rgba(59,201,232,0.06)", border: `1px solid ${C.border}`,
+      borderRadius: 10, padding: "12px 18px", marginBottom: 16,
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      gap: 12, flexWrap: "wrap" }}>
+      <div style={{ fontSize: 13, color: C.text }}>
+        💾 Auto-save this result to patient record?
+        {saveMsg && <span style={{ color: C.danger, marginLeft: 8 }}>{saveMsg}</span>}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={save} disabled={saving}
+          style={{ padding: "7px 18px", borderRadius: 8, border: "none",
+            background: saving ? "rgba(59,201,232,0.3)" : C.accent,
+            color: C.bg, fontWeight: 700, fontSize: 13, cursor: saving ? "not-allowed" : "pointer" }}>
+          {saving ? "Saving..." : "💾 Save"}
+        </button>
+        <button onClick={() => { setDiscarded(true); if (onDiscard) onDiscard(); }}
+          style={{ padding: "7px 18px", borderRadius: 8,
+            border: `1px solid ${C.border}`, background: "transparent",
+            color: C.muted, fontSize: 13, cursor: "pointer" }}>
+          Discard
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Single result card ────────────────────────────────────────────
-function ResultCard({ result, label }) {
+function ResultCard({ result, label, patientId, onSaved }) {
   if (!result) return null;
   if (result.error) return (
     <div style={css({ color: C.danger, padding: 20 })}>❌ {result.error}</div>
   );
 
   return (
-    <div style={css({ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20 })}>
-      {label && <h4 style={css({ color: C.accent, marginBottom: 16, fontSize: 15 })}>{label}</h4>}
-
-      <div style={css({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 })}>
-        {/* Annotated image */}
-        <div>
-          {result.annotated_image ? (
-            <img
-              src={`data:image/jpeg;base64,${result.annotated_image}`}
-              alt="Annotated eye"
-              style={css({ width: "100%", borderRadius: 10, border: `1px solid ${C.border}` })}
-            />
-          ) : (
-            <div style={css({ background: "rgba(59,201,232,0.05)", borderRadius: 10, height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 13 })}>
-              No annotated image
+    <div>
+      <SaveBanner result={result} patientId={patientId} label={label} onSaved={onSaved} />
+      <div style={css({ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20 })}>
+        {label && <h4 style={css({ color: C.accent, marginBottom: 16, fontSize: 15 })}>{label}</h4>}
+        <div style={css({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 })}>
+          <div>
+            {result.annotated_image ? (
+              <img src={`data:image/jpeg;base64,${result.annotated_image}`} alt="Annotated eye"
+                style={css({ width: "100%", borderRadius: 10, border: `1px solid ${C.border}` })} />
+            ) : (
+              <div style={css({ background: "rgba(59,201,232,0.05)", borderRadius: 10, height: 160,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: C.muted, fontSize: 13 })}>No annotated image</div>
+            )}
+          </div>
+          <div>
+            <div style={css({ marginBottom: 12 })}><SevBadge severity={result.severity} /></div>
+            <div style={css({ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 })}>
+              {[
+                ["PIR",         result.pupil_iris_ratio?.toFixed(3)],
+                ["Pupil px",    result.pupil_radius_px?.toFixed(1)],
+                ["Iris px",     result.iris_radius_px?.toFixed(1)],
+                ["Circularity", result.circularity?.toFixed(2)],
+                ["Confidence",  result.confidence + "%"],
+                ["Quality",     result.quality_grade],
+              ].map(([k, v]) => (
+                <div key={k} style={css({ background: "rgba(59,201,232,0.06)", borderRadius: 8, padding: "8px 10px", textAlign: "center" })}>
+                  <div style={css({ fontSize: 10, color: C.muted, marginBottom: 3 })}>{k}</div>
+                  <div style={css({ fontSize: 15, fontWeight: 700, color: C.accent })}>{v}</div>
+                </div>
+              ))}
             </div>
-          )}
+            <div style={css({ fontSize: 13, lineHeight: 1.8 })}>
+              {result.is_dilated     && <div style={css({ color: C.danger })}>🔵 Dilated (Mydriasis)</div>}
+              {result.is_constricted && <div style={css({ color: C.warn })}>🟡 Constricted (Miosis)</div>}
+              {result.is_irregular   && <div style={css({ color: "#f57c00" })}>🟠 Irregular Shape</div>}
+              {!result.is_dilated && !result.is_constricted && !result.is_irregular &&
+                <div style={css({ color: C.accent2 })}>✅ No flags</div>}
+            </div>
+          </div>
         </div>
-
-        {/* Key metrics */}
-        <div>
-          <div style={css({ marginBottom: 12 })}><SevBadge severity={result.severity} /></div>
-          <div style={css({ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 })}>
-            {[
-              ["PIR",         result.pupil_iris_ratio?.toFixed(3)],
-              ["Pupil px",    result.pupil_radius_px?.toFixed(1)],
-              ["Iris px",     result.iris_radius_px?.toFixed(1)],
-              ["Circularity", result.circularity?.toFixed(2)],
-              ["Confidence",  result.confidence + "%"],
-              ["Quality",     result.quality_grade],
-            ].map(([k, v]) => (
-              <div key={k} style={css({ background: "rgba(59,201,232,0.06)", borderRadius: 8, padding: "8px 10px", textAlign: "center" })}>
-                <div style={css({ fontSize: 10, color: C.muted, marginBottom: 3 })}>{k}</div>
-                <div style={css({ fontSize: 15, fontWeight: 700, color: C.accent })}>{v}</div>
-              </div>
+        <div style={css({ marginBottom: 16 })}><PIRBar pir={result.pupil_iris_ratio || 0} /></div>
+        {result.clinical_notes?.length > 0 && (
+          <div style={css({ background: "rgba(59,201,232,0.04)", borderRadius: 10, padding: 14, marginBottom: 12 })}>
+            <div style={css({ fontSize: 12, color: C.muted, marginBottom: 8, fontWeight: 700, letterSpacing: 1 })}>CLINICAL NOTES</div>
+            {result.clinical_notes.map((n, i) => (
+              <div key={i} style={css({ fontSize: 13, color: C.text, marginBottom: 4 })}>• {n}</div>
             ))}
           </div>
-
-          {/* Flags */}
-          <div style={css({ fontSize: 13, lineHeight: 1.8 })}>
-            {result.is_dilated     && <div style={css({ color: C.danger })}>🔵 Dilated (Mydriasis)</div>}
-            {result.is_constricted && <div style={css({ color: C.warn })}>🟡 Constricted (Miosis)</div>}
-            {result.is_irregular   && <div style={css({ color: "#f57c00" })}>🟠 Irregular Shape</div>}
-            {!result.is_dilated && !result.is_constricted && !result.is_irregular &&
-              <div style={css({ color: C.accent2 })}>✅ No flags</div>
-            }
+        )}
+        {result.possible_causes?.length > 0 && !result.possible_causes[0].startsWith("No abnormality") && (
+          <div style={css({ background: "rgba(255,77,109,0.05)", borderRadius: 10, padding: 14 })}>
+            <div style={css({ fontSize: 12, color: C.muted, marginBottom: 8, fontWeight: 700, letterSpacing: 1 })}>POSSIBLE CAUSES</div>
+            {result.possible_causes.map((c, i) => (
+              <div key={i} style={css({ fontSize: 13, color: C.text, marginBottom: 4 })}>• {c}</div>
+            ))}
+            <div style={css({ fontSize: 11, color: C.muted, marginTop: 8 })}>
+              ⚠️ AI-assisted screening only. Confirm with a licensed clinician.
+            </div>
           </div>
-        </div>
+        )}
+        {result.possible_causes?.[0]?.startsWith("No abnormality") && (
+          <div style={css({ color: C.accent2, fontSize: 13, padding: "10px 0" })}>
+            ✅ No significant abnormality detected. Routine follow-up as advised.
+          </div>
+        )}
       </div>
-
-      {/* PIR gauge */}
-      <div style={css({ marginBottom: 16 })}><PIRBar pir={result.pupil_iris_ratio || 0} /></div>
-
-      {/* Clinical notes */}
-      {result.clinical_notes?.length > 0 && (
-        <div style={css({ background: "rgba(59,201,232,0.04)", borderRadius: 10, padding: 14, marginBottom: 12 })}>
-          <div style={css({ fontSize: 12, color: C.muted, marginBottom: 8, fontWeight: 700, letterSpacing: 1 })}>CLINICAL NOTES</div>
-          {result.clinical_notes.map((n, i) => (
-            <div key={i} style={css({ fontSize: 13, color: C.text, marginBottom: 4 })}>• {n}</div>
-          ))}
-        </div>
-      )}
-
-      {/* Possible causes */}
-      {result.possible_causes?.length > 0 && !result.possible_causes[0].startsWith("No abnormality") && (
-        <div style={css({ background: "rgba(255,77,109,0.05)", borderRadius: 10, padding: 14 })}>
-          <div style={css({ fontSize: 12, color: C.muted, marginBottom: 8, fontWeight: 700, letterSpacing: 1 })}>POSSIBLE CAUSES</div>
-          {result.possible_causes.map((c, i) => (
-            <div key={i} style={css({ fontSize: 13, color: C.text, marginBottom: 4 })}>• {c}</div>
-          ))}
-          <div style={css({ fontSize: 11, color: C.muted, marginTop: 8 })}>
-            ⚠️ AI-assisted screening only. Confirm with a licensed clinician.
-          </div>
-        </div>
-      )}
-
-      {result.possible_causes?.[0]?.startsWith("No abnormality") && (
-        <div style={css({ color: C.accent2, fontSize: 13, padding: "10px 0" })}>
-          ✅ No significant abnormality detected. Routine follow-up as advised.
-        </div>
-      )}
     </div>
   );
 }
@@ -144,25 +199,40 @@ function ResultCard({ result, label }) {
 //  MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════
 export default function PupilPage() {
-  const [mode, setMode]       = useState("single"); // single | dual
+  const [mode, setMode]       = useState("single");
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
 
+  // Patient selector
+  const [patients, setPatients]       = useState([]);
+  const [patientsLoaded, setPatientsLoaded] = useState(false);
+  const [patientId, setPatientId]     = useState("");
+
   // Single mode
-  const [singleFile, setSingleFile]     = useState(null);
-  const [singlePreview, setSinglePreview] = useState(null);
-  const [singleResult, setSingleResult] = useState(null);
+  const [singleFile, setSingleFile]         = useState(null);
+  const [singlePreview, setSinglePreview]   = useState(null);
+  const [singleResult, setSingleResult]     = useState(null);
 
   // Dual mode
-  const [leftFile, setLeftFile]       = useState(null);
-  const [rightFile, setRightFile]     = useState(null);
-  const [leftPreview, setLeftPreview] = useState(null);
-  const [rightPreview, setRightPreview] = useState(null);
-  const [dualResult, setDualResult]   = useState(null);
+  const [leftFile, setLeftFile]             = useState(null);
+  const [rightFile, setRightFile]           = useState(null);
+  const [leftPreview, setLeftPreview]       = useState(null);
+  const [rightPreview, setRightPreview]     = useState(null);
+  const [dualResult, setDualResult]         = useState(null);
 
   const singleRef = useRef();
   const leftRef   = useRef();
   const rightRef  = useRef();
+
+  // Load patients lazily when dropdown is focused
+  async function loadPatients() {
+    if (patientsLoaded) return;
+    try {
+      const res = await patientsAPI.getAll();
+      setPatients(res.data || []);
+      setPatientsLoaded(true);
+    } catch { setPatientsLoaded(true); }
+  }
 
   function onFile(e, setter, previewSetter) {
     const file = e.target.files[0];
@@ -195,10 +265,7 @@ export default function PupilPage() {
     setLoading(false);
   }
 
-  const inputStyle = css({
-    display: "none"
-  });
-
+  const inputStyle  = css({ display: "none" });
   const uploadBoxStyle = (preview) => css({
     width: "100%", minHeight: 160, borderRadius: 12,
     border: `2px dashed ${preview ? C.accent : C.border}`,
@@ -208,12 +275,32 @@ export default function PupilPage() {
     cursor: "pointer", transition: "all 0.2s", overflow: "hidden",
   });
 
+  const selectStyle = css({
+    width: "100%", padding: "10px 14px", borderRadius: 8,
+    background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`,
+    color: C.text, fontSize: 14, outline: "none",
+    boxSizing: "border-box", fontFamily: "inherit",
+  });
+
   return (
     <div style={css({ fontFamily: "'Segoe UI', sans-serif", color: C.text })}>
       <h2 style={css({ margin: "0 0 6px", fontSize: 22 })}>👁 Pupil Detection & Analysis</h2>
-      <p style={css({ color: C.muted, fontSize: 14, marginBottom: 24 })}>
+      <p style={css({ color: C.muted, fontSize: 14, marginBottom: 20 })}>
         AI-powered screening for dilation, constriction, anisocoria, and shape irregularities.
       </p>
+
+      {/* ── Patient selector ────────────────────────────────────── */}
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
+        padding: "14px 18px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ fontSize: 13, color: C.muted, whiteSpace: "nowrap" }}>💾 Save results for:</span>
+        <select value={patientId} onFocus={loadPatients}
+          onChange={e => setPatientId(e.target.value)} style={selectStyle}>
+          <option value="">— Select patient (optional) —</option>
+          {patients.map(p => (
+            <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>
+          ))}
+        </select>
+      </div>
 
       {/* Mode tabs */}
       <div style={css({ display: "flex", gap: 8, marginBottom: 24 })}>
@@ -233,7 +320,7 @@ export default function PupilPage() {
         ))}
       </div>
 
-      {/* ── SINGLE MODE ────────────────────────────────────────────── */}
+      {/* ── SINGLE MODE ─────────────────────────────────────────── */}
       {mode === "single" && (
         <div>
           <div style={css({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 })}>
@@ -252,16 +339,9 @@ export default function PupilPage() {
                 }
               </div>
             </div>
-
             <div style={css({ background: "rgba(59,201,232,0.04)", borderRadius: 12, padding: 20 })}>
               <div style={css({ fontSize: 13, fontWeight: 700, color: C.accent, marginBottom: 12 })}>Tips for best results</div>
-              {[
-                "Use a close-up, well-lit photo",
-                "Avoid heavy flash (red-eye effect)",
-                "One eye per image",
-                "Minimum 200 × 200 px",
-                "Keep subject still and in focus",
-              ].map((t, i) => (
+              {["Use a close-up, well-lit photo","Avoid heavy flash (red-eye effect)","One eye per image","Minimum 200 × 200 px","Keep subject still and in focus"].map((t, i) => (
                 <div key={i} style={css({ fontSize: 13, color: C.muted, marginBottom: 6 })}>• {t}</div>
               ))}
             </div>
@@ -279,15 +359,18 @@ export default function PupilPage() {
             {loading ? "🔍 Analysing..." : "🔍 Analyse Pupil"}
           </button>
 
-          {singleResult && <ResultCard result={singleResult} label="Analysis Result" />}
+          {singleResult && (
+            <ResultCard result={singleResult} label="Analysis Result"
+              patientId={patientId}
+              onSaved={() => {}} />
+          )}
         </div>
       )}
 
-      {/* ── DUAL MODE ──────────────────────────────────────────────── */}
+      {/* ── DUAL MODE ───────────────────────────────────────────── */}
       {mode === "dual" && (
         <div>
           <div style={css({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 })}>
-            {/* Left eye */}
             <div>
               <div style={css({ fontSize: 13, color: C.muted, marginBottom: 8 })}>Left Eye</div>
               <div style={uploadBoxStyle(leftPreview)} onClick={() => leftRef.current.click()}>
@@ -295,15 +378,10 @@ export default function PupilPage() {
                   onChange={e => onFile(e, setLeftFile, setLeftPreview)} />
                 {leftPreview
                   ? <img src={leftPreview} alt="left" style={css({ width: "100%", borderRadius: 10 })} />
-                  : <>
-                      <div style={css({ fontSize: 32, marginBottom: 8 })}>👁</div>
-                      <div style={css({ color: C.muted, fontSize: 13 })}>Upload left eye</div>
-                    </>
+                  : <><div style={css({ fontSize: 32, marginBottom: 8 })}>👁</div><div style={css({ color: C.muted, fontSize: 13 })}>Upload left eye</div></>
                 }
               </div>
             </div>
-
-            {/* Right eye */}
             <div>
               <div style={css({ fontSize: 13, color: C.muted, marginBottom: 8 })}>Right Eye</div>
               <div style={uploadBoxStyle(rightPreview)} onClick={() => rightRef.current.click()}>
@@ -311,10 +389,7 @@ export default function PupilPage() {
                   onChange={e => onFile(e, setRightFile, setRightPreview)} />
                 {rightPreview
                   ? <img src={rightPreview} alt="right" style={css({ width: "100%", borderRadius: 10 })} />
-                  : <>
-                      <div style={css({ fontSize: 32, marginBottom: 8 })}>👁</div>
-                      <div style={css({ color: C.muted, fontSize: 13 })}>Upload right eye</div>
-                    </>
+                  : <><div style={css({ fontSize: 32, marginBottom: 8 })}>👁</div><div style={css({ color: C.muted, fontSize: 13 })}>Upload right eye</div></>
                 }
               </div>
             </div>
@@ -332,38 +407,30 @@ export default function PupilPage() {
             {loading ? "🔍 Analysing both eyes..." : "🔍 Run Dual-Eye Analysis"}
           </button>
 
-          {/* Anisocoria result */}
           {dualResult && (
             <div>
               {dualResult.anisocoria ? (
-                <div style={css({
-                  background: "rgba(255,77,109,0.08)", border: `1px solid rgba(255,77,109,0.3)`,
-                  borderLeft: `4px solid ${C.danger}`, borderRadius: 12, padding: 16, marginBottom: 20,
-                })}>
+                <div style={css({ background: "rgba(255,77,109,0.08)", border: `1px solid rgba(255,77,109,0.3)`,
+                  borderLeft: `4px solid ${C.danger}`, borderRadius: 12, padding: 16, marginBottom: 20 })}>
                   <div style={css({ color: C.danger, fontWeight: 700, fontSize: 15, marginBottom: 8 })}>
                     ⚠️ Anisocoria Detected &nbsp;
-                    <span style={css({
-                      background: C.danger + "22", color: C.danger,
+                    <span style={css({ background: C.danger + "22", color: C.danger,
                       border: `1px solid ${C.danger}66`, borderRadius: 6,
-                      padding: "2px 10px", fontSize: 12, fontWeight: 800,
-                    })}>{dualResult.anisocoria_severity}</span>
+                      padding: "2px 10px", fontSize: 12, fontWeight: 800 })}>{dualResult.anisocoria_severity}</span>
                   </div>
                   {dualResult.anisocoria_notes?.map((n, i) => (
                     <div key={i} style={css({ fontSize: 13, color: C.text, marginBottom: 4 })}>• {n}</div>
                   ))}
                 </div>
               ) : (
-                <div style={css({
-                  background: "rgba(0,245,160,0.08)", border: `1px solid rgba(0,245,160,0.3)`,
-                  borderRadius: 12, padding: 14, marginBottom: 20, color: C.accent2, fontSize: 14,
-                })}>
+                <div style={css({ background: "rgba(0,245,160,0.08)", border: `1px solid rgba(0,245,160,0.3)`,
+                  borderRadius: 12, padding: 14, marginBottom: 20, color: C.accent2, fontSize: 14 })}>
                   ✅ No anisocoria detected — pupils appear symmetric.
                 </div>
               )}
-
               <div style={css({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 })}>
-                <ResultCard result={dualResult.left}  label="Left Eye" />
-                <ResultCard result={dualResult.right} label="Right Eye" />
+                <ResultCard result={dualResult.left}  label="Left Eye"  patientId={patientId} onSaved={() => {}} />
+                <ResultCard result={dualResult.right} label="Right Eye" patientId={patientId} onSaved={() => {}} />
               </div>
             </div>
           )}
@@ -372,24 +439,20 @@ export default function PupilPage() {
 
       {/* Reference guide */}
       <div style={css({ marginTop: 32, background: "rgba(59,201,232,0.04)", borderRadius: 12, padding: 20 })}>
-        <div style={css({ fontSize: 13, fontWeight: 700, color: C.accent, marginBottom: 12 })}>
-          📖 PIR Reference Guide
-        </div>
+        <div style={css({ fontSize: 13, fontWeight: 700, color: C.accent, marginBottom: 12 })}>📖 PIR Reference Guide</div>
         <table style={css({ width: "100%", borderCollapse: "collapse", fontSize: 13 })}>
           <thead>
-            <tr>
-              {["PIR Range", "Condition", "Severity"].map(h => (
-                <th key={h} style={css({ textAlign: "left", color: C.muted, padding: "6px 12px", borderBottom: `1px solid ${C.border}`, fontWeight: 600, fontSize: 11 })}>{h}</th>
-              ))}
-            </tr>
+            <tr>{["PIR Range","Condition","Severity"].map(h => (
+              <th key={h} style={css({ textAlign: "left", color: C.muted, padding: "6px 12px", borderBottom: `1px solid ${C.border}`, fontWeight: 600, fontSize: 11 })}>{h}</th>
+            ))}</tr>
           </thead>
           <tbody>
             {[
-              ["< 0.18",      "Constricted (Miosis)",    C.danger,  "Moderate – Severe"],
-              ["0.18 – 0.20", "Borderline Miosis",        C.warn,    "Mild"],
-              ["0.20 – 0.45", "Normal",                   C.accent2, "✅ Normal"],
-              ["0.45 – 0.50", "Borderline Mydriasis",     C.warn,    "Mild"],
-              ["> 0.50",      "Dilated (Mydriasis)",      C.danger,  "Moderate – Severe"],
+              ["< 0.18",      "Constricted (Miosis)",   C.danger,  "Moderate – Severe"],
+              ["0.18 – 0.20", "Borderline Miosis",       C.warn,    "Mild"],
+              ["0.20 – 0.45", "Normal",                  C.accent2, "✅ Normal"],
+              ["0.45 – 0.50", "Borderline Mydriasis",    C.warn,    "Mild"],
+              ["> 0.50",      "Dilated (Mydriasis)",     C.danger,  "Moderate – Severe"],
             ].map(([range, cond, color, sev]) => (
               <tr key={range} style={css({ borderBottom: `1px solid ${C.border}44` })}>
                 <td style={css({ padding: "8px 12px", fontFamily: "monospace", color: C.accent })}>{range}</td>
