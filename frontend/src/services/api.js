@@ -84,6 +84,7 @@ export const appleHealthAPI = {
 export const healthScoreAPI = {
   getScore:   (patientId)            => API.get(`/health-score/${patientId}`),
   getHistory: (patientId, days = 30) => API.get(`/health-score/${patientId}/history?days=${days}`),
+  explain:    (patientId)            => API.get(`/health-score/${patientId}/explain`),
 };
 // ── SYMPTOMS ──────────────────────────────────────────────────────
 export const symptomsAPI = {
@@ -106,3 +107,5 @@ export const timelineAPI = {
   getCategories: (id) => API.get(`/timeline/${id}/categories`),
 };
 export default API;
+// ── HEALTH SCORE (explain endpoint added) ─────────────────────────
+// Note: replaces the earlier healthScoreAPI definition if present
