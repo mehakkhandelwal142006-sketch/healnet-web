@@ -1,5 +1,5 @@
 """
-routes/health_score.py
+routes/health_score_engine.py
 ─────────────────────────────────────────────────────────────────
 GET /api/health-score/{patient_id}              → today's score + breakdown
 GET /api/health-score/{patient_id}/history      → 30-day daily trend
