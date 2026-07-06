@@ -1,369 +1,273 @@
 """
-routes/health_score_engine.py
-─────────────────────────────────────────────────────────────────
-GET /api/health-score/{patient_id}              → today's score + breakdown
-GET /api/health-score/{patient_id}/history      → 30-day daily trend
-GET /api/health-score/{patient_id}/explain      → this week vs last week insights
+health_score.py
+───────────────────────────────────────────────────────────────────
+Rule-based daily health score engine for HealNet.
+
+Score breakdown (max 100):
+  Heart Health  25 pts  — HR, SpO2, BP ranges
+  Recovery      20 pts  — active alerts + symptom severity
+  Activity      20 pts  — steps/calories (partial if no wearable)
+  Sleep         20 pts  — sleep hours (partial if no wearable)
+  Stress        15 pts  — BP variability + symptom count + alert frequency
+
+All sub-scores degrade gracefully: missing data → partial credit,
+never zero. A patient with no wearable still gets a meaningful score
+from vitals + alerts alone.
+───────────────────────────────────────────────────────────────────
 """
 
-from fastapi import APIRouter, HTTPException
-from database import supabase
-from services.health_score_engine import compute_health_score
 from datetime import datetime, timedelta, timezone
-
-router = APIRouter()
-
-
-def _fetch_data(patient_id: str):
-    pat = supabase.table("patients").select("patient_id").eq("patient_id", patient_id).execute()
-    if not pat.data:
-        raise HTTPException(status_code=404, detail="Patient not found")
-
-    vitals = (
-        supabase.table("vitals_readings")
-        .select("*")
-        .eq("patient_id", patient_id)
-        .order("recorded_at", desc=True)
-        .limit(30)
-        .execute()
-        .data
-    )
-
-    alerts = (
-        supabase.table("alert_log")
-        .select("*")
-        .eq("patient_id", patient_id)
-        .order("recorded_at", desc=True)
-        .limit(100)
-        .execute()
-        .data
-    )
-
-    symptoms = []
-    try:
-        symptoms = (
-            supabase.table("symptoms_log")
-            .select("*")
-            .eq("patient_id", patient_id)
-            .order("recorded_at", desc=True)
-            .limit(100)
-            .execute()
-            .data
-        )
-    except Exception:
-        pass
-
-    wearable_summary = None
-    try:
-        we = (
-            supabase.table("health_events")
-            .select("value")
-            .eq("patient_id", patient_id)
-            .eq("event_type", "report")
-            .order("occurred_at", desc=True)
-            .limit(1)
-            .execute()
-            .data
-        )
-        if we and we[0].get("value"):
-            wearable_summary = we[0]["value"]
-    except Exception:
-        pass
-
-    return vitals, alerts, symptoms, wearable_summary
+from typing import Optional
 
 
-@router.get("/{patient_id}")
-def get_health_score(patient_id: str):
-    vitals, alerts, symptoms, wearable = _fetch_data(patient_id)
-    result = compute_health_score(vitals, alerts, symptoms, wearable)
-    return {"patient_id": patient_id, **result}
+# ── Internal helpers ──────────────────────────────────────────────
+def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    return max(lo, min(hi, v))
 
 
-@router.get("/{patient_id}/history")
-def get_health_score_history(patient_id: str, days: int = 30):
-    vitals_all, alerts_all, symptoms_all, _ = _fetch_data(patient_id)
-
-    history = []
-    today = datetime.now(timezone.utc).date()
-
-    for i in range(days - 1, -1, -1):
-        day = today - timedelta(days=i)
-        day_end = datetime.combine(day, datetime.max.time()).replace(tzinfo=timezone.utc).isoformat()
-
-        def up_to(records, field="recorded_at"):
-            return [r for r in records if r.get(field, "") <= day_end]
-
-        v = up_to(vitals_all)
-        a = up_to(alerts_all)
-        s = up_to(symptoms_all)
-
-        if not v and not a:
-            continue
-
-        result = compute_health_score(v, a, s, None)
-        history.append({
-            "date": day.isoformat(),
-            "total": result["total"],
-            "grade": result["grade"],
-            "categories": {c["label"]: c["score"] for c in result["categories"]},
-        })
-
-    return {"patient_id": patient_id, "days": days, "history": history}
+def _score_in_range(value: float, ideal_lo, ideal_hi, warn_lo, warn_hi) -> float:
+    """Return 1.0 if in ideal range, 0.5 if in warning range, 0.0 if outside."""
+    if ideal_lo <= value <= ideal_hi:
+        return 1.0
+    if warn_lo <= value <= warn_hi:
+        return 0.5
+    return 0.0
 
 
 # ════════════════════════════════════════════════════════════════════
-#  EXPLAIN ENDPOINT — this week vs last week
+#  CATEGORY SCORERS
 # ════════════════════════════════════════════════════════════════════
 
-def _avg(records: list, field: str):
-    """Average of a numeric field across records, ignoring None."""
-    vals = [r[field] for r in records if r.get(field) is not None]
-    return round(sum(vals) / len(vals), 1) if vals else None
-
-
-def _pct_change(old, new):
-    if old is None or new is None or old == 0:
-        return None
-    return round(((new - old) / abs(old)) * 100, 1)
-
-
-def _insight(label: str, old, new, unit: str = "",
-             lower_is_better: bool = False, threshold: float = 2.0) -> dict | None:
+def score_heart_health(vitals_list: list) -> dict:
     """
-    Build one insight object if the change exceeds threshold.
-    Returns None if no meaningful change or missing data.
+    Max 25 pts.
+    Uses the most recent vital reading with each metric.
+    Missing metric → excluded from denominator (partial credit).
     """
-    if old is None or new is None:
-        return None
-    change = new - old
-    pct = _pct_change(old, new)
-    if abs(change) < threshold and (pct is None or abs(pct) < threshold):
-        return None  # too small to mention
+    MAX = 25
+    if not vitals_list:
+        return {"score": round(MAX * 0.5), "max": MAX, "label": "Heart Health",
+                "detail": "No vitals recorded — using baseline score.", "has_data": False}
 
-    # Direction from the patient's health perspective
-    if lower_is_better:
-        good = change < 0
-    else:
-        good = change > 0
+    latest = vitals_list[0]  # already sorted desc by recorded_at
 
-    direction = "decreased" if change < 0 else "increased"
-    status = "improved" if good else ("worsened" if abs(pct or change) > 10 else "watch")
+    checks = []
 
-    # Build plain-English sentence
-    if unit == "%":
-        magnitude = f"{abs(pct):.1f}%" if pct is not None else f"{abs(change):.1f}"
-    elif unit == "bpm" or unit == "mmHg" or unit == "°C" or unit == "mg/dL":
-        magnitude = f"{abs(change):.1f} {unit}"
-    else:
-        magnitude = f"{abs(pct):.1f}%" if pct is not None else f"{abs(change):.1f}"
+    hr = latest.get("heart_rate")
+    if hr is not None:
+        checks.append(_score_in_range(hr, 60, 100, 50, 110))
 
-    sentence = f"{label} {direction} by {magnitude} this week."
-    if status == "improved":
-        sentence += " ✅"
-    elif status == "worsened":
-        sentence += " ⚠️"
+    spo2 = latest.get("spo2")
+    if spo2 is not None:
+        checks.append(_score_in_range(spo2, 95, 100, 90, 95))
 
-    return {
-        "label": label,
-        "status": status,       # "improved" | "worsened" | "watch" | "stable"
-        "direction": "down" if change < 0 else "up",
-        "change": round(change, 1),
-        "pct_change": pct,
-        "old_value": old,
-        "new_value": new,
-        "unit": unit,
-        "sentence": sentence,
-    }
+    sbp = latest.get("systolic_bp")
+    if sbp is not None:
+        checks.append(_score_in_range(sbp, 90, 130, 80, 140))
+
+    dbp = latest.get("diastolic_bp")
+    if dbp is not None:
+        checks.append(_score_in_range(dbp, 60, 85, 50, 90))
+
+    if not checks:
+        return {"score": round(MAX * 0.5), "max": MAX, "label": "Heart Health",
+                "detail": "Vitals recorded but no heart metrics found.", "has_data": False}
+
+    ratio = sum(checks) / len(checks)
+    score = round(ratio * MAX)
+    detail = f"HR: {hr or '—'} bpm · SpO2: {spo2 or '—'}% · BP: {f'{sbp}/{dbp}' if sbp else '—'} mmHg"
+    return {"score": score, "max": MAX, "label": "Heart Health",
+            "detail": detail, "has_data": True}
 
 
-@router.get("/{patient_id}/explain")
-def explain_health(patient_id: str):
+def score_recovery(alerts: list, symptoms: list) -> dict:
     """
-    Compare this week (last 7 days) vs last week (days 8-14 ago).
-    Returns a list of plain-English insights with direction and status.
+    Max 20 pts.
+    Penalises active (unacknowledged) alerts and recent symptoms.
     """
-    now = datetime.now(timezone.utc)
-    this_week_start = (now - timedelta(days=7)).isoformat()
-    last_week_start = (now - timedelta(days=14)).isoformat()
-    last_week_end   = (now - timedelta(days=7)).isoformat()
+    MAX = 20
+    score = MAX
 
-    pat = supabase.table("patients").select("patient_id,name").eq("patient_id", patient_id).execute()
-    if not pat.data:
-        raise HTTPException(status_code=404, detail="Patient not found")
-    patient_name = pat.data[0].get("name", "Patient")
+    unacked_critical = sum(1 for a in alerts if not a.get("acknowledged") and a.get("category") == "Critical")
+    unacked_warning  = sum(1 for a in alerts if not a.get("acknowledged") and a.get("category") == "Warning")
+    score -= min(unacked_critical * 5, 15)
+    score -= min(unacked_warning  * 2, 8)
 
-    # ── Fetch vitals for both windows ────────────────────────────
-    def fetch_vitals(start, end=None):
-        q = (supabase.table("vitals_readings").select("*")
-             .eq("patient_id", patient_id)
-             .gte("recorded_at", start))
-        if end:
-            q = q.lte("recorded_at", end)
-        return q.execute().data
-
-    this_vitals = fetch_vitals(this_week_start)
-    last_vitals  = fetch_vitals(last_week_start, last_week_end)
-
-    # ── Fetch alerts for both windows ────────────────────────────
-    def fetch_alerts(start, end=None):
-        q = (supabase.table("alert_log").select("*")
-             .eq("patient_id", patient_id)
-             .gte("recorded_at", start))
-        if end:
-            q = q.lte("recorded_at", end)
-        return q.execute().data
-
-    this_alerts = fetch_alerts(this_week_start)
-    last_alerts  = fetch_alerts(last_week_start, last_week_end)
-
-    # ── Fetch symptoms for both windows ──────────────────────────
-    def fetch_symptoms(start, end=None):
+    # Recent symptoms (last 7 days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    recent_syms = []
+    for s in symptoms:
         try:
-            q = (supabase.table("symptoms_log").select("*")
-                 .eq("patient_id", patient_id)
-                 .gte("recorded_at", start))
-            if end:
-                q = q.lte("recorded_at", end)
-            return q.execute().data
+            ts = datetime.fromisoformat(s.get("recorded_at", "").replace("Z", "+00:00"))
+            if ts >= cutoff:
+                recent_syms.append(s)
         except Exception:
-            return []
+            pass
 
-    this_syms = fetch_symptoms(this_week_start)
-    last_syms  = fetch_symptoms(last_week_start, last_week_end)
+    severe   = sum(1 for s in recent_syms if s.get("severity") == "severe")
+    moderate = sum(1 for s in recent_syms if s.get("severity") == "moderate")
+    score -= min(severe * 4, 10)
+    score -= min(moderate * 2, 6)
 
-    # ── Health scores for both windows ───────────────────────────
-    def fetch_all_vitals_up_to(cutoff):
-        return (supabase.table("vitals_readings").select("*")
-                .eq("patient_id", patient_id)
-                .lte("recorded_at", cutoff)
-                .order("recorded_at", desc=True)
-                .limit(30)
-                .execute().data)
+    score = max(0, score)
+    detail = f"{unacked_critical} critical · {unacked_warning} warning alerts · {len(recent_syms)} recent symptoms"
+    return {"score": score, "max": MAX, "label": "Recovery",
+            "detail": detail, "has_data": True}
 
-    def fetch_all_alerts_up_to(cutoff):
-        return (supabase.table("alert_log").select("*")
-                .eq("patient_id", patient_id)
-                .lte("recorded_at", cutoff)
-                .order("recorded_at", desc=True)
-                .limit(100)
-                .execute().data)
 
-    this_score_obj = compute_health_score(
-        fetch_all_vitals_up_to(now.isoformat()),
-        fetch_all_alerts_up_to(now.isoformat()),
-        this_syms, None
-    )
-    last_score_obj = compute_health_score(
-        fetch_all_vitals_up_to(last_week_end),
-        fetch_all_alerts_up_to(last_week_end),
-        last_syms, None
-    )
+def score_activity(wearable_summary: Optional[dict]) -> dict:
+    """
+    Max 20 pts.
+    If no wearable data → 10 pts baseline (neutral, not penalised).
+    """
+    MAX = 20
+    if not wearable_summary:
+        return {"score": 10, "max": MAX, "label": "Activity",
+                "detail": "No wearable data — connect a device for full scoring.",
+                "has_data": False}
 
-    insights = []
+    steps    = wearable_summary.get("avg_steps")
+    calories = wearable_summary.get("avg_calories")
+    sub = []
 
-    # ── Vital metric insights ─────────────────────────────────────
-    metrics = [
-        ("Resting HR",      "heart_rate",    "bpm",   False),
-        ("SpO2",            "spo2",          "%",     True),   # lower is worse
-        ("Systolic BP",     "systolic_bp",   "mmHg",  False),
-        ("Temperature",     "temperature",   "°C",    False),
-        ("Blood Sugar",     "blood_sugar",   "mg/dL", False),
-    ]
+    if steps is not None:
+        # Target: 8000+ steps = full credit, <2000 = 0
+        sub.append(_clamp((steps - 2000) / 6000))
 
-    for label, field, unit, lower_is_better in metrics:
-        old_avg = _avg(last_vitals, field)
-        new_avg = _avg(this_vitals, field)
-        ins = _insight(label, old_avg, new_avg, unit,
-                       lower_is_better=lower_is_better, threshold=1.0)
-        if ins:
-            insights.append(ins)
+    if calories is not None:
+        # Target: 400+ kcal active = full, <100 = 0
+        sub.append(_clamp((calories - 100) / 300))
 
-    # ── Alert count insight ───────────────────────────────────────
-    old_alerts = len(last_alerts)
-    new_alerts  = len(this_alerts)
-    if old_alerts != new_alerts:
-        direction = "decreased" if new_alerts < old_alerts else "increased"
-        good = new_alerts < old_alerts
-        diff = abs(new_alerts - old_alerts)
-        insights.append({
-            "label": "Health Alerts",
-            "status": "improved" if good else "worsened",
-            "direction": "down" if new_alerts < old_alerts else "up",
-            "change": new_alerts - old_alerts,
-            "pct_change": _pct_change(old_alerts, new_alerts),
-            "old_value": old_alerts,
-            "new_value": new_alerts,
-            "unit": "alerts",
-            "sentence": f"Health alerts {direction} by {diff} this week. {'✅' if good else '⚠️'}",
-        })
+    if not sub:
+        return {"score": 10, "max": MAX, "label": "Activity",
+                "detail": "Wearable connected but no step/calorie data.", "has_data": False}
 
-    # ── Symptom count insight ─────────────────────────────────────
-    old_syms_count = len(last_syms)
-    new_syms_count  = len(this_syms)
-    if old_syms_count != new_syms_count:
-        direction = "decreased" if new_syms_count < old_syms_count else "increased"
-        good = new_syms_count < old_syms_count
-        diff = abs(new_syms_count - old_syms_count)
-        insights.append({
-            "label": "Symptoms Reported",
-            "status": "improved" if good else "worsened",
-            "direction": "down" if new_syms_count < old_syms_count else "up",
-            "change": new_syms_count - old_syms_count,
-            "pct_change": _pct_change(old_syms_count, new_syms_count),
-            "old_value": old_syms_count,
-            "new_value": new_syms_count,
-            "unit": "symptoms",
-            "sentence": f"Symptoms reported {direction} by {diff} this week. {'✅' if good else '⚠️'}",
-        })
+    ratio = sum(sub) / len(sub)
+    score = round(ratio * MAX)
+    parts = []
+    if steps is not None:    parts.append(f"{int(steps):,} avg steps")
+    if calories is not None: parts.append(f"{int(calories)} avg kcal")
+    return {"score": score, "max": MAX, "label": "Activity",
+            "detail": " · ".join(parts), "has_data": True}
 
-    # ── Overall health score insight ──────────────────────────────
-    old_score = last_score_obj["total"]
-    new_score  = this_score_obj["total"]
-    score_ins = _insight("Overall Health Score", old_score, new_score,
-                         unit="%", lower_is_better=False, threshold=1.0)
-    if score_ins:
-        score_ins["sentence"] = (
-            f"Overall health score {'improved' if new_score > old_score else 'dropped'} "
-            f"from {old_score} to {new_score} this week. "
-            f"{'✅' if new_score > old_score else '⚠️'}"
-        )
-        insights.append(score_ins)
 
-    # ── Category score insights ───────────────────────────────────
-    this_cats = {c["label"]: c["score"] for c in this_score_obj["categories"]}
-    last_cats = {c["label"]: c["score"] for c in last_score_obj["categories"]}
-    for cat_label, new_val in this_cats.items():
-        old_val = last_cats.get(cat_label)
-        ins = _insight(f"{cat_label} Score", old_val, new_val,
-                       unit="pts", lower_is_better=False, threshold=1.0)
-        if ins:
-            insights.append(ins)
+def score_sleep(wearable_summary: Optional[dict]) -> dict:
+    """
+    Max 20 pts.
+    If no wearable data → 10 pts baseline.
+    """
+    MAX = 20
+    if not wearable_summary:
+        return {"score": 10, "max": MAX, "label": "Sleep",
+                "detail": "No wearable data — connect a device for full scoring.",
+                "has_data": False}
 
-    # ── Summary line ──────────────────────────────────────────────
-    improved = sum(1 for i in insights if i["status"] == "improved")
-    worsened = sum(1 for i in insights if i["status"] == "worsened")
+    sleep_hrs = wearable_summary.get("avg_sleep")
+    if sleep_hrs is None:
+        return {"score": 10, "max": MAX, "label": "Sleep",
+                "detail": "Wearable connected but no sleep data.", "has_data": False}
 
-    if not insights:
-        summary = f"Not enough data yet to compare this week vs last week for {patient_name}."
-    elif improved > worsened:
-        summary = f"{patient_name}'s health is trending positively — {improved} indicator(s) improved this week."
-    elif worsened > improved:
-        summary = f"{patient_name}'s health needs attention — {worsened} indicator(s) worsened this week."
+    # Ideal: 7–9 hrs. Penalty for <6 or >10.
+    if 7 <= sleep_hrs <= 9:
+        ratio = 1.0
+    elif 6 <= sleep_hrs < 7 or 9 < sleep_hrs <= 10:
+        ratio = 0.7
+    elif 5 <= sleep_hrs < 6 or 10 < sleep_hrs <= 11:
+        ratio = 0.4
     else:
-        summary = f"{patient_name}'s health is stable — mixed signals this week."
+        ratio = 0.1
 
-    # Sort: worsened first, then watch, then improved
-    order = {"worsened": 0, "watch": 1, "improved": 2, "stable": 3}
-    insights.sort(key=lambda x: order.get(x["status"], 3))
+    score = round(ratio * MAX)
+    return {"score": score, "max": MAX, "label": "Sleep",
+            "detail": f"Avg {sleep_hrs:.1f} hrs/night", "has_data": True}
+
+
+def score_stress(vitals_list: list, symptoms: list, alerts: list) -> dict:
+    """
+    Max 15 pts.
+    Derived from: BP variability across readings, symptom burden, alert frequency.
+    """
+    MAX = 15
+    score = MAX
+
+    # BP variability: high variance in systolic_bp → stress signal
+    sbp_readings = [v["systolic_bp"] for v in vitals_list if v.get("systolic_bp") is not None]
+    if len(sbp_readings) >= 3:
+        avg = sum(sbp_readings) / len(sbp_readings)
+        variance = sum((x - avg) ** 2 for x in sbp_readings) / len(sbp_readings)
+        std = variance ** 0.5
+        if std > 20:
+            score -= 5
+        elif std > 10:
+            score -= 3
+
+    # Symptom burden (all time, not just recent — cumulative indicator)
+    sym_count = len(symptoms)
+    score -= min(sym_count // 3, 5)
+
+    # Alert frequency in last 7 days
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    recent_alerts = 0
+    for a in alerts:
+        try:
+            ts = datetime.fromisoformat(a.get("recorded_at", "").replace("Z", "+00:00"))
+            if ts >= cutoff:
+                recent_alerts += 1
+        except Exception:
+            pass
+    score -= min(recent_alerts // 2, 5)
+
+    score = max(0, score)
+    bp_var_str = f"BP std dev: {(variance**0.5):.1f}" if len(sbp_readings) >= 3 else "BP variability: insufficient data"
+    return {"score": score, "max": MAX, "label": "Stress",
+            "detail": f"{bp_var_str} · {sym_count} total symptoms · {recent_alerts} alerts/7d",
+            "has_data": True}
+
+
+# ════════════════════════════════════════════════════════════════════
+#  MAIN ENTRY POINT
+# ════════════════════════════════════════════════════════════════════
+
+def compute_health_score(
+    vitals_list: list,
+    alerts: list,
+    symptoms: list,
+    wearable_summary: Optional[dict] = None,
+) -> dict:
+    """
+    Returns a complete health score payload:
+    {
+        total: int (0-100),
+        grade: str,
+        categories: [ { label, score, max, detail, has_data }, ... ],
+        computed_at: str (ISO),
+    }
+    """
+    heart    = score_heart_health(vitals_list)
+    recovery = score_recovery(alerts, symptoms)
+    activity = score_activity(wearable_summary)
+    sleep    = score_sleep(wearable_summary)
+    stress   = score_stress(vitals_list, symptoms, alerts)
+
+    categories = [heart, recovery, activity, sleep, stress]
+    total = sum(c["score"] for c in categories)
+
+    if total >= 85:
+        grade = "Excellent"
+    elif total >= 70:
+        grade = "Good"
+    elif total >= 55:
+        grade = "Fair"
+    elif total >= 40:
+        grade = "Poor"
+    else:
+        grade = "Critical"
 
     return {
-        "patient_id": patient_id,
-        "patient_name": patient_name,
-        "period": "this_week_vs_last_week",
-        "this_week_score": this_score_obj["total"],
-        "last_week_score": old_score,
-        "summary": summary,
-        "insights": insights,
-        "has_data": len(this_vitals) > 0 or len(this_alerts) > 0,
+        "total": total,
+        "max": 100,
+        "grade": grade,
+        "categories": categories,
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "wearable_connected": wearable_summary is not None,
     }
