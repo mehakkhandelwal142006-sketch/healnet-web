@@ -8,7 +8,7 @@ GET /api/health-score/{patient_id}/explain      → this week vs last week insig
 
 from fastapi import APIRouter, HTTPException
 from database import supabase
-from services.health_score import compute_health_score
+from services.health_score_engine import compute_health_score
 from datetime import datetime, timedelta, timezone
 
 router = APIRouter()
