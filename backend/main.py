@@ -1,7 +1,7 @@
  # healnet api
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import auth, patients, vitals, alerts, ai, pupil, smartwatch, symptoms, medications, timeline, health_score
+from routes import auth, patients, vitals, alerts, ai, pupil, smartwatch, symptoms, medications, timeline, health_score,smart_alerts
 
 app = FastAPI(title="HealNet API", version="2.0.0")
 app.add_middleware(
@@ -28,6 +28,7 @@ app.include_router(symptoms.router,      prefix="/api/symptoms",     tags=["Symp
 app.include_router(medications.router,   prefix="/api/medications",  tags=["Medications"])
 app.include_router(timeline.router,      prefix="/api/timeline",     tags=["Timeline"])
 app.include_router(health_score.router,  prefix="/api/health-score", tags=["Health Score"])
+app.include_router(smart_alerts.router, prefix="/api/smart-alerts", tags=["Smart Alerts"])
 
 @app.get("/")
 def root():
