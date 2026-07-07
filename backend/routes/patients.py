@@ -18,6 +18,20 @@ def get_all_patients(authorization: Optional[str] = Header(None)):
         query = query.eq("created_by", user_id)
     result = query.execute()
     return result.data
+def get_user_id(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    try:
+        token = authorization.replace("Bearer ", "")
+        # Try decoding without verification first to see payload
+        payload = jwt.decode(token, options={"verify_signature": False})
+        print(f"DEBUG payload: {payload}")
+        # Now try with secret
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return payload.get("user_id") or payload.get("sub") or payload.get("id")
+    except Exception as e:
+        print(f"DEBUG JWT error: {e}")  # ← this will show exact error
+        return None
 # ── Helper: get user_id from token ───────────────────────────────
 def get_user_id(authorization: Optional[str]) -> Optional[str]:
     if not authorization:
