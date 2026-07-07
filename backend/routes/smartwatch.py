@@ -5,8 +5,35 @@ import io
 import httpx
 import json
 from datetime import datetime, timedelta
-
+from database import supabase
+from datetime import date as date_cls
 router = APIRouter()
+
+def _persist_daily_wearable(patient_id: str, per_day: dict, source: str):
+    """
+    per_day: { date_str: { 'avg_heart_rate':..., 'avg_steps':..., 'avg_spo2':...,
+                            'avg_sleep_hours':..., 'avg_calories':... } }
+    Upserts one row per patient per day into wearable_daily.
+    """
+    if not patient_id or not per_day:
+        return
+    rows = []
+    for d, vals in per_day.items():
+        rows.append({
+            "patient_id": patient_id,
+            "date": d,
+            "avg_heart_rate": vals.get("avg_heart_rate"),
+            "avg_steps": vals.get("avg_steps"),
+            "avg_spo2": vals.get("avg_spo2"),
+            "avg_sleep_hours": vals.get("avg_sleep_hours"),
+            "avg_calories": vals.get("avg_calories"),
+            "source": source,
+        })
+    if rows:
+        try:
+            supabase.table("wearable_daily").upsert(rows, on_conflict="patient_id,date").execute()
+        except Exception as e:
+            print(f"WARN: failed to persist wearable_daily: {e}")
 
 # ── Helper: parse numeric safely ─────────────────────────────────
 def safe_num(val):
@@ -37,7 +64,7 @@ def summarise(df: pd.DataFrame) -> dict:
 #  CSV UPLOAD
 # ═══════════════════════════════════════════════════════════════════
 @router.post("/upload-csv")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload_csv(file: UploadFile = File(...), patient_id: str = Query(None)):
     try:
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
@@ -74,6 +101,20 @@ async def upload_csv(file: UploadFile = File(...)):
                     sub = sub.rename(columns={date_col: "date", metric: metric})
                     sub["date"] = sub["date"].astype(str)
                 data[metric] = sub.to_dict(orient="records")
+        per_day = {}
+        if date_col:
+            df["_date_str"] = df[date_col].astype(str).str.slice(0, 10)  # YYYY-MM-DD
+            for d, group in df.groupby("_date_str"):
+                per_day[d] = {
+                    "avg_heart_rate": safe_num(group["heart_rate"].mean()) if "heart_rate" in group else None,
+                    "avg_steps":      safe_num(group["steps"].mean())      if "steps"      in group else None,
+                    "avg_spo2":       safe_num(group["spo2"].mean())       if "spo2"       in group else None,
+                    "avg_sleep_hours":safe_num(group["sleep_hours"].mean()) if "sleep_hours" in group else None,
+                    "avg_calories":   safe_num(group["calories"].mean())   if "calories"   in group else None,
+               }
+            _persist_daily_wearable(patient_id, per_day, source="csv")
+                
+               
 
         return {
             "source":        "csv",
