@@ -8,7 +8,16 @@ import os
 router = APIRouter()
 
 JWT_SECRET = os.getenv("JWT_SECRET", "healnet-secret")
-
+@router.get("/")
+def get_all_patients(authorization: Optional[str] = Header(None)):
+    user_id = get_user_id(authorization)
+    print(f"DEBUG user_id: {user_id}")  # ← add this
+    print(f"DEBUG auth header: {authorization[:50] if authorization else None}")
+    query = supabase.table("patients").select("*").order("created_at", desc=True)
+    if user_id:
+        query = query.eq("created_by", user_id)
+    result = query.execute()
+    return result.data
 # ── Helper: get user_id from token ───────────────────────────────
 def get_user_id(authorization: Optional[str]) -> Optional[str]:
     if not authorization:
