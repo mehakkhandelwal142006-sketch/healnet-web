@@ -7,7 +7,7 @@ import os
 
 router = APIRouter()
 
-JWT_SECRET = os.getenv("JWT_SECRET", "healnet-secret")
+JWT_SECRET = os.getenv("JWT_SECRET", "healnet-secret-key")
 @router.get("/")
 def get_all_patients(authorization: Optional[str] = Header(None)):
     user_id = get_user_id(authorization)
