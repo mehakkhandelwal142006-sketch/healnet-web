@@ -5,7 +5,7 @@ import {
   Tooltip, ResponsiveContainer, RadarChart, Radar,
   PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from "recharts";
-import SmartAlertsTab from "./SmartAlertsTab";
+import SmartAlertsTab from "../services/SmartAlertsTab";
 
 const C = {
   bg:     "#030c2c",
