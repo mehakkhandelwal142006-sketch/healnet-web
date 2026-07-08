@@ -4,36 +4,11 @@ import pandas as pd
 import io
 import httpx
 import json
+import os
 from datetime import datetime, timedelta
 from database import supabase
-from datetime import date as date_cls
-router = APIRouter()
 
-def _persist_daily_wearable(patient_id: str, per_day: dict, source: str):
-    """
-    per_day: { date_str: { 'avg_heart_rate':..., 'avg_steps':..., 'avg_spo2':...,
-                            'avg_sleep_hours':..., 'avg_calories':... } }
-    Upserts one row per patient per day into wearable_daily.
-    """
-    if not patient_id or not per_day:
-        return
-    rows = []
-    for d, vals in per_day.items():
-        rows.append({
-            "patient_id": patient_id,
-            "date": d,
-            "avg_heart_rate": vals.get("avg_heart_rate"),
-            "avg_steps": vals.get("avg_steps"),
-            "avg_spo2": vals.get("avg_spo2"),
-            "avg_sleep_hours": vals.get("avg_sleep_hours"),
-            "avg_calories": vals.get("avg_calories"),
-            "source": source,
-        })
-    if rows:
-        try:
-            supabase.table("wearable_daily").upsert(rows, on_conflict="patient_id,date").execute()
-        except Exception as e:
-            print(f"WARN: failed to persist wearable_daily: {e}")
+router = APIRouter()
 
 # ── Helper: parse numeric safely ─────────────────────────────────
 def safe_num(val):
@@ -59,6 +34,35 @@ def summarise(df: pd.DataFrame) -> dict:
         "avg_calories":    avg("calories"),
         "avg_systolic_bp": avg("systolic_bp"),
     }
+
+# ── Helper: persist daily wearable summaries for trend detection ──
+def _persist_daily_wearable(patient_id: str, per_day: dict, source: str):
+    """
+    per_day: { date_str: { 'avg_heart_rate':..., 'avg_steps':..., 'avg_spo2':...,
+                            'avg_sleep_hours':..., 'avg_calories':... } }
+    Upserts one row per patient per day into wearable_daily, so Smart Alerts
+    can detect multi-day Sleep/Activity trends.
+    """
+    if not patient_id or not per_day:
+        return
+    rows = []
+    for d, vals in per_day.items():
+        rows.append({
+            "patient_id": patient_id,
+            "date": d,
+            "avg_heart_rate": vals.get("avg_heart_rate"),
+            "avg_steps": vals.get("avg_steps"),
+            "avg_spo2": vals.get("avg_spo2"),
+            "avg_sleep_hours": vals.get("avg_sleep_hours"),
+            "avg_calories": vals.get("avg_calories"),
+            "source": source,
+        })
+    if rows:
+        try:
+            supabase.table("wearable_daily").upsert(rows, on_conflict="patient_id,date").execute()
+        except Exception as e:
+            print(f"WARN: failed to persist wearable_daily: {e}")
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  CSV UPLOAD
@@ -101,20 +105,20 @@ async def upload_csv(file: UploadFile = File(...), patient_id: str = Query(None)
                     sub = sub.rename(columns={date_col: "date", metric: metric})
                     sub["date"] = sub["date"].astype(str)
                 data[metric] = sub.to_dict(orient="records")
-        per_day = {}
+
+        # ── Build per-day averages and persist for trend detection ─
         if date_col:
             df["_date_str"] = df[date_col].astype(str).str.slice(0, 10)  # YYYY-MM-DD
+            per_day = {}
             for d, group in df.groupby("_date_str"):
                 per_day[d] = {
-                    "avg_heart_rate": safe_num(group["heart_rate"].mean()) if "heart_rate" in group else None,
-                    "avg_steps":      safe_num(group["steps"].mean())      if "steps"      in group else None,
-                    "avg_spo2":       safe_num(group["spo2"].mean())       if "spo2"       in group else None,
-                    "avg_sleep_hours":safe_num(group["sleep_hours"].mean()) if "sleep_hours" in group else None,
-                    "avg_calories":   safe_num(group["calories"].mean())   if "calories"   in group else None,
-               }
+                    "avg_heart_rate":  safe_num(group["heart_rate"].mean())  if "heart_rate"  in group else None,
+                    "avg_steps":       safe_num(group["steps"].mean())       if "steps"       in group else None,
+                    "avg_spo2":        safe_num(group["spo2"].mean())        if "spo2"        in group else None,
+                    "avg_sleep_hours": safe_num(group["sleep_hours"].mean()) if "sleep_hours" in group else None,
+                    "avg_calories":    safe_num(group["calories"].mean())    if "calories"    in group else None,
+                }
             _persist_daily_wearable(patient_id, per_day, source="csv")
-                
-               
 
         return {
             "source":        "csv",
@@ -130,8 +134,6 @@ async def upload_csv(file: UploadFile = File(...), patient_id: str = Query(None)
 # ═══════════════════════════════════════════════════════════════════
 #  GOOGLE FIT — STATUS CHECK
 # ═══════════════════════════════════════════════════════════════════
-import os
-
 GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI  = os.getenv("GOOGLE_REDIRECT_URI", "")
@@ -218,6 +220,7 @@ async def refresh_token(old_token: dict) -> dict:
 async def google_fit_data(payload: dict):
     token = payload.get("token")
     days  = int(payload.get("days", 30))
+    patient_id = payload.get("patient_id")
 
     if not token:
         raise HTTPException(status_code=400, detail="Missing token")
@@ -301,6 +304,22 @@ async def google_fit_data(payload: dict):
     }
 
     total = sum([len(heart_rate), len(steps_list), len(spo2_list), len(sleep_list), len(calories_list)])
+
+    # ── Build per-day dict from the per-metric lists and persist ──
+    per_day = {}
+
+    def merge(lst, key, out_key):
+        for item in lst:
+            d = item["date"]
+            per_day.setdefault(d, {})[out_key] = item.get(key)
+
+    merge(heart_rate,    "heart_rate",  "avg_heart_rate")
+    merge(steps_list,    "steps",       "avg_steps")
+    merge(spo2_list,     "spo2",        "avg_spo2")
+    merge(sleep_list,    "sleep_hours", "avg_sleep_hours")
+    merge(calories_list, "calories",    "avg_calories")
+
+    _persist_daily_wearable(patient_id, per_day, source="google_fit")
 
     return {
         "source":        "google_fit",
