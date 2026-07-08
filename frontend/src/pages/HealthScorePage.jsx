@@ -5,6 +5,7 @@ import {
   Tooltip, ResponsiveContainer, RadarChart, Radar,
   PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from "recharts";
+import SmartAlertsTab from "./SmartAlertsTab";
 
 const C = {
   bg:     "#030c2c",
@@ -211,6 +212,7 @@ export default function HealthScorePage({ patientId, patientName }) {
     { id: "explain", label: "💡 Explain" },
     { id: "trend",   label: "📈 Trend"   },
     { id: "radar",   label: "🕸 Radar"   },
+    { id: "alerts",  label: "🚨 Smart Alerts" },
   ];
 
   return (
@@ -399,6 +401,11 @@ export default function HealthScorePage({ patientId, patientName }) {
             })}
           </div>
         </Card>
+      )}
+
+      {/* ── SMART ALERTS VIEW ─────────────────────────────────── */}
+      {view === "alerts" && (
+        <SmartAlertsTab patientId={patientId} />
       )}
     </div>
   );
