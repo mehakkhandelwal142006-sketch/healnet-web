@@ -7,6 +7,8 @@ import CameraPage     from "./pages/CameraPage";
 import SmartWatchPage from "./pages/SmartWatchPage";
 
 import HealthScorePage from "./pages/HealthScorePage";
+import SmartAlertBanner           from "./pages/SmartAlertBanner";
+import SmartAlertsOverviewBanner  from "./pages/SmartAlertsOverviewBanner";
 
 import { useNetwork }                        from "./offline/useNetwork";
 import { OfflineBanner }                     from "./offline/OfflineBanner";
@@ -508,6 +510,14 @@ function Dashboard({ user, onLogout, network }) {
                     📵 You're offline — showing cached data. Alerts and stats may not reflect the latest.
                   </div>
                 )}
+
+                {/* ── Smart Alerts: who needs attention ─────────── */}
+                <SmartAlertsOverviewBanner
+                  patients={patients}
+                  onView={openPatient}
+                  enabled={network.isOnline}
+                />
+
                 <div style={css({ display: "grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4,1fr)", gap: mobile ? 10 : 16, marginBottom: 28 })}>
                   {[
                     { label: "Total Patients",  value: patients.length,            color: C.accent,  icon: "👥" },
@@ -609,6 +619,10 @@ function Dashboard({ user, onLogout, network }) {
                 <button onClick={() => setPage("patients")} style={css({ background: "none", border: "none", color: C.accent, cursor: "pointer", fontSize: 14, marginBottom: 20 })}>
                   ← Back to Patients
                 </button>
+
+                {/* ── Smart Alerts: this patient's trends ───────── */}
+                <SmartAlertBanner patientId={selPatient.patient_id} />
+
                 <div style={css({ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 2fr", gap: 20, marginBottom: 20 })}>
                   <Card>
                     <h3 style={css({ margin: "0 0 16px", color: C.accent })}>Patient Info</h3>
