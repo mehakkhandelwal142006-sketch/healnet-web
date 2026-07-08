@@ -48,6 +48,10 @@ export const alertsAPI = {
   acknowledge:   (alertId, ackBy)      => API.patch(`/alerts/${alertId}/acknowledge?ack_by=${ackBy}`),
   stats:         ()                    => API.get("/alerts/stats/summary"),
 };
+// ── SMART ALERTS ──────────────────────────────────────────────────
+export const smartAlertsAPI = {
+  getForPatient: (patientId) => API.get(`/smart-alerts/${patientId}`),
+};
 // ── AI ────────────────────────────────────────────────────────────
 export const aiAPI = {
   analyze:       (patientId) => API.get(`/ai/${patientId}`),
@@ -69,11 +73,16 @@ export const pupilAPI = {
 };
 // ── SMARTWATCH ────────────────────────────────────────────────────
 export const smartwatchAPI = {
-  uploadCSV:         (file)         => { const form = new FormData(); form.append("file", file); return API.post("/smartwatch/upload-csv", form); },
+  uploadCSV: (file, patientId) => {
+    const form = new FormData();
+    form.append("file", file);
+    return API.post(`/smartwatch/upload-csv?patient_id=${encodeURIComponent(patientId)}`, form);
+  },
   googleFitStatus:   ()             => API.get("/smartwatch/google-fit/status"),
   googleFitAuthUrl:  ()             => API.get("/smartwatch/google-fit/auth-url"),
   googleFitExchange: (code)         => API.post("/smartwatch/google-fit/exchange", { code }),
-  googleFitData:     (token, days)  => API.post("/smartwatch/google-fit/data", { token, days }),
+  googleFitData:     (token, days, patientId) =>
+    API.post("/smartwatch/google-fit/data", { token, days, patient_id: patientId }),
 };
 // ── APPLE HEALTH ──────────────────────────────────────────────────
 export const appleHealthAPI = {
@@ -107,5 +116,3 @@ export const timelineAPI = {
   getCategories: (id) => API.get(`/timeline/${id}/categories`),
 };
 export default API;
-// ── HEALTH SCORE (explain endpoint added) ─────────────────────────
-// Note: replaces the earlier healthScoreAPI definition if present
