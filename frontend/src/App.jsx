@@ -7,7 +7,7 @@ import CameraPage     from "./pages/CameraPage";
 import SmartWatchPage from "./pages/SmartWatchPage";
 
 import HealthScorePage from "./pages/HealthScorePage";
-import SmartAlertBanner           from "./pages/SmartAlertBanner";
+import SmartAlertBanner           from "./services/SmartAlertBanner";
 import SmartAlertsOverviewBanner  from "./pages/SmartAlertsOverviewBanner";
 
 import { useNetwork }                        from "./offline/useNetwork";
