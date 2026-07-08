@@ -49,16 +49,15 @@ function gradeColor(grade) {
 }
 
 // ── SVG arc gauge ────────────────────────────────────────────────
+// ── SVG arc gauge ────────────────────────────────────────────────
 function ScoreGauge({ total, max = 100, grade }) {
-  const pct = total / max;
+  const pct = Math.max(0, Math.min(1, total / max));
   const R = 80, cx = 110, cy = 100;
   const color = gradeColor(grade);
-  const large = pct > 0.5 ? 1 : 0;
-  const bgPath = `M ${cx - R} ${cy} A ${R} ${R} 0 1 1 ${cx + R * Math.cos(2 * Math.PI)} ${cy + R * Math.sin(2 * Math.PI)}`;
   const angle = Math.PI + pct * Math.PI;
   const fx = cx + R * Math.cos(angle);
   const fy = cy + R * Math.sin(angle);
-  const fgPath = pct <= 0 ? "" : `M ${cx - R} ${cy} A ${R} ${R} 0 ${large} 1 ${fx} ${fy}`;
+  const fgPath = pct <= 0 ? "" : `M ${cx - R} ${cy} A ${R} ${R} 0 0 1 ${fx} ${fy}`;
 
   return (
     <svg viewBox="0 0 220 120" style={{ width: "100%", maxWidth: 260, display: "block", margin: "0 auto" }}>
