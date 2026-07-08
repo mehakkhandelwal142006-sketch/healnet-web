@@ -8,40 +8,41 @@ import os
 router = APIRouter()
 
 JWT_SECRET = os.getenv("JWT_SECRET", "healnet-secret-key")
-@router.get("/")
-def get_all_patients(authorization: Optional[str] = Header(None)):
-    user_id = get_user_id(authorization)
-    print(f"DEBUG user_id: {user_id}")  # ← add this
-    print(f"DEBUG auth header: {authorization[:50] if authorization else None}")
-    query = supabase.table("patients").select("*").order("created_at", desc=True)
-    if user_id:
-        query = query.eq("created_by", user_id)
-    result = query.execute()
-    return result.data
-def get_user_id(authorization: Optional[str]) -> Optional[str]:
-    if not authorization:
-        return None
+
+
+class AuthUser:
+    """Resolved identity from a Bearer token."""
+    def __init__(self, user_id: str, kind: str):
+        self.user_id = user_id
+        self.kind = kind
+
+    @property
+    def is_org(self) -> bool:
+        return self.kind == "org"
+
+
+# ── Helper: get user identity from token (fails CLOSED, not open) ─
+def get_auth_user(authorization: Optional[str]) -> AuthUser:
+    """
+    Returns the (user_id, kind) from a valid Bearer token.
+    Raises 401 if the header is missing, malformed, or the token
+    is invalid/expired — instead of silently returning None.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
+    token = authorization.replace("Bearer ", "")
     try:
-        token = authorization.replace("Bearer ", "")
-        # Try decoding without verification first to see payload
-        payload = jwt.decode(token, options={"verify_signature": False})
-        print(f"DEBUG payload: {payload}")
-        # Now try with secret
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return payload.get("user_id") or payload.get("sub") or payload.get("id")
-    except Exception as e:
-        print(f"DEBUG JWT error: {e}")  # ← this will show exact error
-        return None
-# ── Helper: get user_id from token ───────────────────────────────
-def get_user_id(authorization: Optional[str]) -> Optional[str]:
-    if not authorization:
-        return None
-    try:
-        token = authorization.replace("Bearer ", "")
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return payload.get("user_id") or payload.get("sub") or payload.get("id")
-    except Exception:
-        return None
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user_id = payload.get("user_id") or payload.get("sub") or payload.get("id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Token missing user identity")
+    kind = payload.get("kind", "solo")
+    return AuthUser(user_id=user_id, kind=kind)
+
 
 class PatientCreate(BaseModel):
     patient_id:          str
@@ -64,42 +65,48 @@ class PatientCreate(BaseModel):
     emergency_contact:   Optional[str] = None
     model_config = {"extra": "ignore"}
 
-# ── GET ALL — only patients added by logged-in user ───────────────
+
+# ── GET ALL ─────────────────────────────────────────────────────
+# org        -> every patient in the system
+# solo/staff -> only patients they created
 @router.get("/")
 def get_all_patients(authorization: Optional[str] = Header(None)):
-    user_id = get_user_id(authorization)
+    auth = get_auth_user(authorization)
     query = supabase.table("patients").select("*").order("created_at", desc=True)
-    if user_id:
-        query = query.eq("created_by", user_id)
+    if not auth.is_org:
+        query = query.eq("created_by", auth.user_id)
     result = query.execute()
     return result.data
 
-# ── SEARCH — only within logged-in user's patients ────────────────
+
+# ── SEARCH ──────────────────────────────────────────────────────
 @router.get("/search/{query}")
 def search_patients(query: str, authorization: Optional[str] = Header(None)):
-    user_id = get_user_id(authorization)
+    auth = get_auth_user(authorization)
     q = supabase.table("patients").select("*").ilike("name", f"%{query}%")
-    if user_id:
-        q = q.eq("created_by", user_id)
+    if not auth.is_org:
+        q = q.eq("created_by", auth.user_id)
     result = q.execute()
     return result.data
 
-# ── GET ONE — only if it belongs to logged-in user ────────────────
+
+# ── GET ONE ─────────────────────────────────────────────────────
 @router.get("/{patient_id}")
 def get_patient(patient_id: str, authorization: Optional[str] = Header(None)):
-    user_id = get_user_id(authorization)
+    auth = get_auth_user(authorization)
     q = supabase.table("patients").select("*").eq("patient_id", patient_id)
-    if user_id:
-        q = q.eq("created_by", user_id)
+    if not auth.is_org:
+        q = q.eq("created_by", auth.user_id)
     result = q.execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Patient not found")
     return result.data[0]
 
-# ── CREATE — save created_by = logged-in user ─────────────────────
+
+# ── CREATE — always stamped with the creator's own user_id ───────
 @router.post("/")
 def create_patient(body: PatientCreate, authorization: Optional[str] = Header(None)):
-    user_id = get_user_id(authorization)
+    auth = get_auth_user(authorization)
     existing = (
         supabase.table("patients")
         .select("patient_id")
@@ -109,32 +116,39 @@ def create_patient(body: PatientCreate, authorization: Optional[str] = Header(No
     if existing.data:
         raise HTTPException(status_code=400, detail="Patient ID already exists")
     data = body.model_dump()
-    if user_id:
-        data["created_by"] = user_id
+    data["created_by"] = auth.user_id
     result = supabase.table("patients").insert(data).execute()
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to create patient")
     return result.data[0]
 
-# ── UPDATE — only if belongs to logged-in user ────────────────────
+
+# ── UPDATE ──────────────────────────────────────────────────────
+# org        -> can update any patient
+# solo/staff -> only their own
 @router.put("/{patient_id}")
 def update_patient(patient_id: str, body: dict, authorization: Optional[str] = Header(None)):
-    user_id = get_user_id(authorization)
+    auth = get_auth_user(authorization)
     body.pop("patient_id", None)
     q = supabase.table("patients").update(body).eq("patient_id", patient_id)
-    if user_id:
-        q = q.eq("created_by", user_id)
+    if not auth.is_org:
+        q = q.eq("created_by", auth.user_id)
     result = q.execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Patient not found")
     return result.data[0]
 
-# ── DELETE — only if belongs to logged-in user ────────────────────
+
+# ── DELETE ──────────────────────────────────────────────────────
+# org        -> can delete any patient
+# solo/staff -> only their own
 @router.delete("/{patient_id}")
 def delete_patient(patient_id: str, authorization: Optional[str] = Header(None)):
-    user_id = get_user_id(authorization)
+    auth = get_auth_user(authorization)
     q = supabase.table("patients").delete().eq("patient_id", patient_id)
-    if user_id:
-        q = q.eq("created_by", user_id)
-    q.execute()
+    if not auth.is_org:
+        q = q.eq("created_by", auth.user_id)
+    result = q.execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Patient not found")
     return {"message": f"Patient {patient_id} deleted successfully"}
