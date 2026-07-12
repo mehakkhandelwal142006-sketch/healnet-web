@@ -1,47 +1,18 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { authAPI, patientsAPI, vitalsAPI, alertsAPI, symptomsAPI, medicationsAPI } from "./services/api";
+import { useState, useEffect, useCallback } from "react";
+import { authAPI, patientsAPI, vitalsAPI, alertsAPI } from "./services/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { GoogleAuth } from "@codetrix-studio/capacitor-google-auth";
 import AIPanel        from "./pages/AIPanel";
 import PupilPage      from "./pages/PupilPage";
 import CameraPage     from "./pages/CameraPage";
 import SmartWatchPage from "./pages/SmartWatchPage";
-
+import TimelinePage    from "./pages/TimelinePage";
 import HealthScorePage from "./pages/HealthScorePage";
-import SmartAlertBanner           from "./services/SmartAlertBanner";
-import SmartAlertsOverviewBanner  from "./pages/SmartAlertsOverviewBanner";
+import SmartAlertsPage from "./pages/SmartAlertsPage";
+import FamilyDashboardPage from "./pages/FamilyDashboardPage";
+import BloodReportAnalyzer from "./pages/BloodReportAnalyzer";
+import SmartAlertsOverviewBanner from "./pages/SmartAlertsOverviewBanner";
 
-import { useNetwork }                        from "./offline/useNetwork";
-import { OfflineBanner }                     from "./offline/OfflineBanner";
-import { cachePatients, getCachedPatients }  from "./offline/offlineStore";
-
-// ── Error Boundary — catches async component or render crashes ────
-class ErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
-  static getDerivedStateFromError(error) { return { hasError: true, error }; }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{ padding: 40, textAlign: "center", color: "#e8f4f8", fontFamily: "'Segoe UI', sans-serif" }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>⚠️</div>
-          <div style={{ color: "#ff4d6d", fontWeight: 700, marginBottom: 8, fontSize: 16 }}>
-            Something went wrong loading this page
-          </div>
-          <div style={{ color: "rgba(232,244,248,0.5)", fontSize: 13, marginBottom: 20 }}>
-            {this.state.error?.message || "Unknown error"}
-          </div>
-          <button onClick={() => this.setState({ hasError: false, error: null })}
-            style={{ padding: "10px 24px", borderRadius: 8, border: "none",
-              background: "#3BC9E8", color: "#030c2c", fontWeight: 700, cursor: "pointer" }}>
-            Try Again
-          </button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-// ── THEME ─────────────────────────────────────────────────────────
 const C = {
   bg:     "#030c2c",
   card:   "#04163c",
@@ -96,181 +67,6 @@ function EyeIcon({ open, color }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  TIMELINE PAGE (inline)
-// ═══════════════════════════════════════════════════════════════════
-function TimelinePage({ patientId, patientName }) {
-  const [vitals, setVitals]     = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState("");
-  const [logTab, setLogTab]     = useState("symptom");
-  const [symptomForm, setSymptomForm] = useState({ symptom: "", severity: "mild", notes: "" });
-  const [medForm, setMedForm]         = useState({ medication_name: "", dosage: "", notes: "" });
-  const [logMsg, setLogMsg]     = useState("");
-  const [logLoading, setLogLoading] = useState(false);
-  const width  = useWindowWidth();
-  const mobile = width < 768;
-
-  const inputS = css({ width:"100%", padding:"10px 14px", borderRadius:8, background:"rgba(59,201,232,0.07)", border:`1px solid ${C.border}`, color:C.text, fontSize:14, outline:"none", boxSizing:"border-box", fontFamily:"inherit" });
-
-  useEffect(() => {
-    setLoading(true);
-    vitalsAPI.getForPatient(patientId, 30)
-      .then(r => { setVitals(r.data.reverse()); setLoading(false); })
-      .catch(() => { setError("Could not load vitals."); setLoading(false); });
-  }, [patientId]);
-
-  async function logSymptom() {
-    if (!symptomForm.symptom) { setLogMsg("Symptom name is required"); return; }
-    setLogLoading(true); setLogMsg("");
-    try {
-      await symptomsAPI.record({ patient_id: patientId, ...symptomForm });
-      setLogMsg("✅ Symptom logged.");
-      setSymptomForm({ symptom: "", severity: "mild", notes: "" });
-    } catch (e) { setLogMsg(e.response?.data?.detail || "Error logging symptom"); }
-    setLogLoading(false);
-  }
-
-  async function logMedication() {
-    if (!medForm.medication_name) { setLogMsg("Medication name is required"); return; }
-    setLogLoading(true); setLogMsg("");
-    try {
-      await medicationsAPI.record({ patient_id: patientId, ...medForm });
-      setLogMsg("✅ Medication logged.");
-      setMedForm({ medication_name: "", dosage: "", notes: "" });
-    } catch (e) { setLogMsg(e.response?.data?.detail || "Error logging medication"); }
-    setLogLoading(false);
-  }
-
-  const vitalDefs = [
-    { key: "heart_rate",   label: "Heart Rate",  unit: "bpm",   color: C.danger,  icon: "❤️"  },
-    { key: "spo2",         label: "SpO2",         unit: "%",     color: C.accent,  icon: "🫁"  },
-    { key: "temperature",  label: "Temperature",  unit: "°C",    color: C.warn,    icon: "🌡️" },
-    { key: "systolic_bp",  label: "Systolic BP",  unit: "mmHg",  color: C.accent2, icon: "💉"  },
-    { key: "blood_sugar",  label: "Blood Sugar",  unit: "mg/dL", color: "#a78bfa", icon: "🩸"  },
-  ];
-
-  return (
-    <div>
-      <h2 style={{ margin: "0 0 6px", fontSize: mobile ? 18 : 22 }}>🕓 Health Timeline</h2>
-      <p style={{ color: C.muted, fontSize: 13, marginBottom: 24 }}>
-        Patient: <strong style={{ color: C.text }}>{patientName}</strong>
-      </p>
-
-      {/* ── Quick Log Forms ─────────────────────────────────────── */}
-      <Card style={{ marginBottom: 24, padding: 20 }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          {[["symptom", "🩹 Log Symptom"], ["medication", "💊 Log Medication"]].map(([k, label]) => (
-            <button key={k} onClick={() => { setLogTab(k); setLogMsg(""); }}
-              style={{ flex: 1, padding: "9px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13, background: logTab === k ? C.accent : "rgba(59,201,232,0.08)", color: logTab === k ? C.bg : C.muted }}>
-              {label}
-            </button>
-          ))}
-        </div>
-        {logTab === "symptom" ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <input placeholder="Symptom (e.g. headache, fatigue)" value={symptomForm.symptom}
-              onChange={e => setSymptomForm(f => ({ ...f, symptom: e.target.value }))} style={inputS} />
-            <select value={symptomForm.severity} onChange={e => setSymptomForm(f => ({ ...f, severity: e.target.value }))} style={inputS}>
-              <option value="mild">Mild</option>
-              <option value="moderate">Moderate</option>
-              <option value="severe">Severe</option>
-            </select>
-            <input placeholder="Notes (optional)" value={symptomForm.notes}
-              onChange={e => setSymptomForm(f => ({ ...f, notes: e.target.value }))} style={inputS} />
-            <button onClick={logSymptom} disabled={logLoading}
-              style={{ padding: "10px", borderRadius: 8, border: "none", background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer" }}>
-              {logLoading ? "Saving..." : "Log Symptom"}
-            </button>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <input placeholder="Medication name" value={medForm.medication_name}
-              onChange={e => setMedForm(f => ({ ...f, medication_name: e.target.value }))} style={inputS} />
-            <input placeholder="Dosage (e.g. 500mg)" value={medForm.dosage}
-              onChange={e => setMedForm(f => ({ ...f, dosage: e.target.value }))} style={inputS} />
-            <input placeholder="Notes (optional)" value={medForm.notes}
-              onChange={e => setMedForm(f => ({ ...f, notes: e.target.value }))} style={inputS} />
-            <button onClick={logMedication} disabled={logLoading}
-              style={{ padding: "10px", borderRadius: 8, border: "none", background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer" }}>
-              {logLoading ? "Saving..." : "Log Medication"}
-            </button>
-          </div>
-        )}
-        {logMsg && (
-          <div style={{ marginTop: 10, fontSize: 13, color: logMsg.startsWith("✅") ? C.accent2 : C.danger }}>
-            {logMsg}
-          </div>
-        )}
-      </Card>
-
-      {/* ── Vitals Charts ────────────────────────────────────────── */}
-      {loading ? (
-        <div style={{ color: C.muted, textAlign: "center", padding: 60 }}>Loading timeline...</div>
-      ) : error ? (
-        <div style={{ color: C.danger, textAlign: "center", padding: 60 }}>{error}</div>
-      ) : !vitals.length ? (
-        <div style={{ color: C.muted, textAlign: "center", padding: 60 }}>No vitals recorded yet for {patientName}.</div>
-      ) : (
-        <>
-          <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 24 }}>
-            {vitalDefs.map(v => {
-              const data = vitals.filter(r => r[v.key] != null);
-              if (!data.length) return null;
-              return (
-                <Card key={v.key} style={{ padding: 16 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: v.color, marginBottom: 12 }}>
-                    {v.icon} {v.label}
-                  </div>
-                  <ResponsiveContainer width="100%" height={120}>
-                    <LineChart data={data}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                      <XAxis dataKey="recorded_at" tickFormatter={d => new Date(d).toLocaleDateString()} stroke={C.muted} tick={{ fontSize: 9 }} />
-                      <YAxis stroke={C.muted} tick={{ fontSize: 9 }} />
-                      <Tooltip
-                        contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 11 }}
-                        labelFormatter={d => new Date(d).toLocaleString()}
-                        formatter={val => [`${val} ${v.unit}`, v.label]}
-                      />
-                      <Line type="monotone" dataKey={v.key} stroke={v.color} dot={{ r: 3, fill: v.color }} strokeWidth={2} name={v.label} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </Card>
-              );
-            })}
-          </div>
-
-          {/* ── Timeline list ──────────────────────────────────── */}
-          <Card style={{ padding: 0 }}>
-            <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ fontWeight: 700, color: C.text, fontSize: 14 }}>📋 All Readings</div>
-            </div>
-            <div style={{ maxHeight: 400, overflowY: "auto" }}>
-              {[...vitals].reverse().map((v, i) => (
-                <div key={i} style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}44`, display: "flex", alignItems: "flex-start", gap: 14 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.accent, marginTop: 5, flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>
-                      {new Date(v.recorded_at).toLocaleString()} · {v.source || "manual"}
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {vitalDefs.map(d => v[d.key] != null ? (
-                        <span key={d.key} style={{ background: d.color + "18", border: `1px solid ${d.color}44`, borderRadius: 6, padding: "2px 8px", fontSize: 12, color: d.color, fontWeight: 600 }}>
-                          {d.icon} {v[d.key]} {d.unit}
-                        </span>
-                      ) : null)}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════
 //  LOGIN PAGE
 // ═══════════════════════════════════════════════════════════════════
 function LoginPage({ onLogin }) {
@@ -280,6 +76,28 @@ function LoginPage({ onLogin }) {
   const [error, setError]       = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  useEffect(() => {
+    GoogleAuth.initialize({
+      clientId: "560479363796-6c16e4olgj39bcplh8r0egc2d5klb0gv.apps.googleusercontent.com",
+      scopes: ["profile", "email"],
+      grantOfflineAccess: true,
+    });
+  }, []);
+
+  async function handleGoogleLogin() {
+    setError(""); setLoading(true);
+    try {
+      const googleUser = await GoogleAuth.signIn();
+      const res = await authAPI.googleLogin(googleUser.authentication.idToken);
+      localStorage.setItem("healnet_token", res.data.token);
+      localStorage.setItem("healnet_user", JSON.stringify(res.data.user));
+      onLogin(res.data.user);
+    } catch (e) {
+      setError("Google sign-in failed. Please try again.");
+    }
+    setLoading(false);
+  }
 
   async function handleSubmit() {
     setError(""); setLoading(true);
@@ -346,6 +164,30 @@ function LoginPage({ onLogin }) {
               style={css({ padding: "13px", borderRadius: 10, border: "none", background: loading ? "rgba(59,201,232,0.3)" : C.accent, color: C.bg, fontWeight: 700, fontSize: 15, cursor: loading ? "not-allowed" : "pointer", transition: "all 0.2s", marginTop: 4 })}>
               {loading ? "Please wait..." : mode === "login" ? "Log In →" : "Create Account →"}
             </button>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0" }}>
+              <div style={{ flex: 1, height: 1, background: C.border }} />
+              <span style={{ color: C.muted, fontSize: 12 }}>OR</span>
+              <div style={{ flex: 1, height: 1, background: C.border }} />
+            </div>
+
+            <button onClick={handleGoogleLogin} disabled={loading} type="button"
+              style={css({
+                padding: "12px", borderRadius: 10,
+                border: `1px solid ${C.border}`,
+                background: "rgba(255,255,255,0.04)",
+                color: C.text, fontWeight: 600, fontSize: 14,
+                cursor: loading ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+              })}>
+              <svg width="18" height="18" viewBox="0 0 48 48">
+                <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.1 8 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.5-.4-3.5z"/>
+                <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 16 18.9 13 24 13c3.1 0 5.9 1.1 8 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+                <path fill="#4CAF50" d="M24 44c5.5 0 10.5-2.1 14.3-5.6l-6.6-5.6C29.6 34.6 26.9 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.6 5.1C9.6 39.6 16.3 44 24 44z"/>
+                <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.3-4.1 5.8l6.6 5.6C41.9 36.3 44 30.6 44 24c0-1.3-.1-2.5-.4-3.5z"/>
+              </svg>
+              Sign in with Google
+            </button>
           </div>
         </Card>
       </div>
@@ -356,7 +198,7 @@ function LoginPage({ onLogin }) {
 // ═══════════════════════════════════════════════════════════════════
 //  DASHBOARD
 // ═══════════════════════════════════════════════════════════════════
-function Dashboard({ user, onLogout, network }) {
+function Dashboard({ user, onLogout }) {
   const [page, setPage]             = useState("overview");
   const [patients, setPatients]     = useState([]);
   const [alerts, setAlerts]         = useState([]);
@@ -379,22 +221,13 @@ function Dashboard({ user, onLogout, network }) {
         alertsAPI.stats(),
       ]);
       setPatients(pRes.data);
-      cachePatients(pRes.data);
       setAlerts(aRes.data);
       setStats(sRes.data);
-    } catch (e) {
-      console.error(e);
-      const cached = getCachedPatients();
-      if (cached.length) setPatients(cached);
-    }
+    } catch (e) { console.error(e); }
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  useEffect(() => {
-    if (network.isOnline && !network.syncing) { load(); }
-  }, [network.isOnline, network.syncing]);
 
   async function openPatient(p) {
     setSelPatient(p); setPage("patient");
@@ -420,12 +253,15 @@ function Dashboard({ user, onLogout, network }) {
     { id: "patients",   label: "Patients",        icon: "👥" },
     { id: "alerts",     label: "Alerts",          icon: "🚨" },
     { id: "vitals",     label: "Add Vitals",      icon: "💓" },
-    { id: "timeline",   label: "Timeline",        icon: "🕓" },
-    { id: "healthscore",label: "Health Score",    icon: "📊" },
     { id: "ai",         label: "AI Insights",     icon: "🤖" },
     { id: "pupil",      label: "Pupil Detection", icon: "👁"  },
     { id: "camera",     label: "Camera Vitals",   icon: "📷" },
     { id: "smartwatch", label: "Smartwatch",      icon: "⌚" },
+    { id: "timeline",     label: "Timeline",      icon: "📅" },
+    { id: "healthscore",  label: "Health Score",  icon: "💯" },
+    { id: "smartalerts",  label: "Smart Alerts",  icon: "🧠" },
+    { id: "family",       label: "Family",        icon: "👨‍👩‍👧‍👦" },
+    { id: "bloodreport",  label: "Blood Reports",  icon: "🩸" },
   ];
 
   function navClick(id) { setPage(id); if (mobile) setSidebarOpen(false); }
@@ -434,17 +270,12 @@ function Dashboard({ user, onLogout, network }) {
     <div style={css({ minHeight: "100vh", background: C.bg, display: "flex", fontFamily: "'Segoe UI', sans-serif", color: C.text, flexDirection: mobile ? "column" : "row", position: "relative" })}>
 
       {mobile && (
-        <div style={css({ background: C.card, borderBottom: `1px solid ${C.border}`, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 200 })}>
+        <div style={css({ background: C.card, borderBottom: `1px solid ${C.border}`, padding: "12px 16px", paddingTop: "calc(12px + env(safe-area-inset-top, 24px))", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 200 })}>
           <button onClick={() => setSidebarOpen(o => !o)}
             style={css({ background: "none", border: `1px solid ${C.border}`, color: C.accent, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 18 })}>
             {sidebarOpen ? "✕" : "☰"}
           </button>
           <div style={css({ fontSize: 18, fontWeight: 800, color: C.accent })}>🩺 HealNet</div>
-          {!network.isOnline && (
-            <div style={{ fontSize: 10, color: C.danger, background: "rgba(255,77,109,0.15)", borderRadius: 6, padding: "3px 8px", fontWeight: 600 }}>
-              📵
-            </div>
-          )}
         </div>
       )}
 
@@ -467,11 +298,6 @@ function Dashboard({ user, onLogout, network }) {
           <div style={css({ padding: "0 20px 24px", borderBottom: `1px solid ${C.border}` })}>
             <div style={css({ fontSize: 22, fontWeight: 800, color: C.accent })}>🩺 HealNet</div>
             <div style={css({ color: C.muted, fontSize: 11, marginTop: 2 })}>AI Health Platform</div>
-            {!network.isOnline && (
-              <div style={{ marginTop: 8, fontSize: 10, color: C.danger, background: "rgba(255,77,109,0.1)", borderRadius: 6, padding: "3px 8px", display: "inline-block", fontWeight: 600 }}>
-                📵 Offline {network.pendingCount > 0 && `· ${network.pendingCount} pending`}
-              </div>
-            )}
           </div>
         )}
         <nav style={css({ padding: "16px 12px", flex: 1, overflowY: "auto" })}>
@@ -505,19 +331,7 @@ function Dashboard({ user, onLogout, network }) {
             {page === "overview" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>Good day, {user.name} 👋</h2>
-                {!network.isOnline && (
-                  <div style={{ background: "rgba(255,209,102,0.08)", border: "1px solid rgba(255,209,102,0.3)", borderRadius: 12, padding: "12px 18px", marginBottom: 20, fontSize: 13, color: C.warn }}>
-                    📵 You're offline — showing cached data. Alerts and stats may not reflect the latest.
-                  </div>
-                )}
-
-                {/* ── Smart Alerts: who needs attention ─────────── */}
-                <SmartAlertsOverviewBanner
-                  patients={patients}
-                  onView={openPatient}
-                  enabled={network.isOnline}
-                />
-
+                <SmartAlertsOverviewBanner patients={patients} onView={openPatient} enabled={true} />
                 <div style={css({ display: "grid", gridTemplateColumns: mobile ? "1fr 1fr" : "repeat(4,1fr)", gap: mobile ? 10 : 16, marginBottom: 28 })}>
                   {[
                     { label: "Total Patients",  value: patients.length,            color: C.accent,  icon: "👥" },
@@ -557,7 +371,7 @@ function Dashboard({ user, onLogout, network }) {
               <div>
                 <div style={css({ display: "flex", justifyContent: "space-between", alignItems: mobile ? "flex-start" : "center", flexDirection: mobile ? "column" : "row", gap: mobile ? 12 : 0, marginBottom: 24 })}>
                   <h2 style={css({ margin: 0, fontSize: mobile ? 18 : 24 })}>Patients</h2>
-                  <AddPatientForm onAdded={load} disabled={!network.isOnline} />
+                  <AddPatientForm onAdded={load} />
                 </div>
                 <input placeholder="🔍  Search by name or ID..." value={search} onChange={e => setSearch(e.target.value)}
                   style={css({ width: "100%", maxWidth: mobile ? "100%" : 360, padding: "10px 16px", borderRadius: 10, background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`, color: C.text, fontSize: 14, outline: "none", marginBottom: 20, boxSizing: "border-box", fontFamily: "inherit" })} />
@@ -619,10 +433,6 @@ function Dashboard({ user, onLogout, network }) {
                 <button onClick={() => setPage("patients")} style={css({ background: "none", border: "none", color: C.accent, cursor: "pointer", fontSize: 14, marginBottom: 20 })}>
                   ← Back to Patients
                 </button>
-
-                {/* ── Smart Alerts: this patient's trends ───────── */}
-                <SmartAlertBanner patientId={selPatient.patient_id} />
-
                 <div style={css({ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 2fr", gap: 20, marginBottom: 20 })}>
                   <Card>
                     <h3 style={css({ margin: "0 0 16px", color: C.accent })}>Patient Info</h3>
@@ -686,12 +496,7 @@ function Dashboard({ user, onLogout, network }) {
                 </div>
                 <AddVitalForm patientId={selPatient.patient_id} onAdded={() => openPatient(selPatient)} />
                 <div style={css({ marginTop: 20, maxHeight: mobile ? "70vh" : "none", overflowY: mobile ? "auto" : "visible" })}>
-                  {network.isOnline
-                    ? <AIPanel patientId={selPatient.patient_id} />
-                    : <div style={{ background: "rgba(59,201,232,0.04)", border: `1px solid ${C.border}`, borderRadius: 16, padding: 24, textAlign: "center", color: C.muted, fontSize: 14 }}>
-                        🤖 AI Insights require an internet connection.
-                      </div>
-                  }
+                  <AIPanel patientId={selPatient.patient_id} />
                 </div>
               </div>
             )}
@@ -699,11 +504,6 @@ function Dashboard({ user, onLogout, network }) {
             {page === "alerts" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>Alerts</h2>
-                {!network.isOnline && (
-                  <div style={{ background: "rgba(255,209,102,0.08)", border: "1px solid rgba(255,209,102,0.3)", borderRadius: 10, padding: "10px 16px", marginBottom: 16, fontSize: 13, color: C.warn }}>
-                    📵 Offline — showing last loaded alerts.
-                  </div>
-                )}
                 <div style={css({ display: "flex", flexDirection: "column", gap: 12, maxHeight: mobile ? "75vh" : "none", overflowY: mobile ? "auto" : "visible" })}>
                   {alerts.map(a => (
                     <Card key={a.id} style={{ borderColor: a.category === "Critical" ? C.danger + "66" : C.warn + "66", padding: mobile ? 14 : 24 }}>
@@ -716,7 +516,7 @@ function Dashboard({ user, onLogout, network }) {
                           <div style={css({ fontWeight: 600, marginBottom: 4, fontSize: mobile ? 13 : 15 })}>{a.message}</div>
                           <div style={css({ color: C.muted, fontSize: 12 })}>Patient: {a.patient_name || a.patient_id} · {new Date(a.recorded_at).toLocaleString()}</div>
                         </div>
-                        {!a.acknowledged && network.isOnline && (
+                        {!a.acknowledged && (
                           <button onClick={() => ackAlert(a.id)}
                             style={css({ padding: "7px 16px", borderRadius: 8, border: `1px solid ${C.accent2}`, background: "transparent", color: C.accent2, cursor: "pointer", fontSize: 13, whiteSpace: "nowrap" })}>
                             ✓ Acknowledge
@@ -739,84 +539,33 @@ function Dashboard({ user, onLogout, network }) {
               </div>
             )}
 
-            {page === "timeline" && (
-              selPatient
-                ? <TimelinePage patientId={selPatient.patient_id} patientName={selPatient.name} />
-                : (
-                  <div>
-                    <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>🕓 Health Timeline</h2>
-                    <div style={css({ marginBottom: 20 })}>
-                      <select onChange={e => setSelPatient(patients.find(p => p.patient_id === e.target.value) || null)}
-                        style={css({ padding: "10px 16px", borderRadius: 10, background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`, color: C.text, fontSize: 14, outline: "none", width: mobile ? "100%" : "auto", minWidth: mobile ? "100%" : 280, boxSizing: "border-box" })}>
-                        <option value="">— Select a patient —</option>
-                        {patients.map(p => <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>)}
-                      </select>
-                    </div>
-                    <div style={css({ color: C.muted, textAlign: "center", padding: 60 })}>
-                      Select a patient to view their health timeline
-                    </div>
-                  </div>
-                )
-            )}
-
-            {/* ── HEALTH SCORE ──────────────────────────────────── */}
-            {page === "healthscore" && (
-              selPatient
-                ? <HealthScorePage patientId={selPatient.patient_id} patientName={selPatient.name} />
-                : (
-                  <div>
-                    <h2 style={{ margin: "0 0 24px", fontSize: mobile ? 18 : 24 }}>📊 Health Score</h2>
-                    <div style={{ marginBottom: 20 }}>
-                      <select onChange={e => setSelPatient(patients.find(p => p.patient_id === e.target.value) || null)}
-                        style={{ padding: "10px 16px", borderRadius: 10, background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`, color: C.text, fontSize: 14, outline: "none", width: mobile ? "100%" : "auto", minWidth: mobile ? "100%" : 280, boxSizing: "border-box" }}>
-                        <option value="">— Select a patient —</option>
-                        {patients.map(p => <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>)}
-                      </select>
-                    </div>
-                    <div style={{ color: C.muted, textAlign: "center", padding: 60 }}>
-                      Select a patient to view their health score
-                    </div>
-                  </div>
-                )
-            )}
-
             {page === "ai" && (
               <div>
                 <h2 style={css({ margin: "0 0 24px", fontSize: mobile ? 18 : 24 })}>🤖 AI Insights</h2>
-                {!network.isOnline ? (
-                  <div style={{ background: "rgba(59,201,232,0.04)", border: `1px solid ${C.border}`, borderRadius: 16, padding: 48, textAlign: "center", color: C.muted, fontSize: 15 }}>
-                    🤖 AI Insights require an internet connection.
-                  </div>
-                ) : (
-                  <>
-                    <div style={css({ marginBottom: 20 })}>
-                      <select onChange={e => setSelPatient(patients.find(p => p.patient_id === e.target.value) || null)}
-                        style={css({ padding: "10px 16px", borderRadius: 10, background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`, color: C.text, fontSize: 14, outline: "none", width: mobile ? "100%" : "auto", minWidth: mobile ? "100%" : 280, boxSizing: "border-box" })}>
-                        <option value="">— Select a patient —</option>
-                        {patients.map(p => <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>)}
-                      </select>
-                    </div>
-                    <div style={{ maxHeight: mobile ? "65vh" : "none", overflowY: mobile ? "auto" : "visible", paddingRight: mobile ? 2 : 0 }}>
-                      {selPatient
-                        ? <AIPanel patientId={selPatient.patient_id} />
-                        : <div style={css({ color: C.muted, textAlign: "center", padding: 60 })}>Select a patient to view AI analysis</div>
-                      }
-                    </div>
-                  </>
-                )}
+                <div style={css({ marginBottom: 20 })}>
+                  <select onChange={e => setSelPatient(patients.find(p => p.patient_id === e.target.value) || null)}
+                    style={css({ padding: "10px 16px", borderRadius: 10, background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`, color: C.text, fontSize: 14, outline: "none", width: mobile ? "100%" : "auto", minWidth: mobile ? "100%" : 280, boxSizing: "border-box" })}>
+                    <option value="">— Select a patient —</option>
+                    {patients.map(p => <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>)}
+                  </select>
+                </div>
+                <div style={{ maxHeight: mobile ? "65vh" : "none", overflowY: mobile ? "auto" : "visible", paddingRight: mobile ? 2 : 0 }}>
+                  {selPatient
+                    ? <AIPanel patientId={selPatient.patient_id} />
+                    : <div style={css({ color: C.muted, textAlign: "center", padding: 60 })}>Select a patient to view AI analysis</div>
+                  }
+                </div>
               </div>
             )}
 
-            {page === "pupil" && (
-              network.isOnline
-                ? <ErrorBoundary><PupilPage /></ErrorBoundary>
-                : <div style={{ background: "rgba(59,201,232,0.04)", border: `1px solid ${C.border}`, borderRadius: 16, padding: 48, textAlign: "center", color: C.muted, fontSize: 15 }}>
-                    👁 Pupil Detection requires an internet connection.
-                  </div>
-            )}
-
-            {page === "camera"     && <ErrorBoundary><CameraPage /></ErrorBoundary>}
-            {page === "smartwatch" && <ErrorBoundary><SmartWatchPage /></ErrorBoundary>}
+            {page === "pupil"      && <PupilPage />}
+            {page === "camera"     && <CameraPage />}
+            {page === "smartwatch" && <SmartWatchPage patients={patients} />}
+            {page === "timeline"    && <TimelinePage    patients={patients} />}
+            {page === "healthscore" && <HealthScorePage patients={patients} />}
+            {page === "smartalerts" && <SmartAlertsPage patients={patients} />}
+            {page === "family"      && <FamilyDashboardPage patients={patients} onOpenPatient={openPatient} />}
+            {page === "bloodreport" && <BloodReportAnalyzer patients={patients} />}
           </>
         )}
       </div>
@@ -827,7 +576,7 @@ function Dashboard({ user, onLogout, network }) {
 // ═══════════════════════════════════════════════════════════════════
 //  FORMS
 // ═══════════════════════════════════════════════════════════════════
-function AddPatientForm({ onAdded, disabled }) {
+function AddPatientForm({ onAdded }) {
   const [open, setOpen]       = useState(false);
   const [form, setForm]       = useState({ patient_id:"", name:"", age:"", gender:"Male", blood_group:"", contact:"", email:"" });
   const [loading, setLoading] = useState(false);
@@ -838,7 +587,6 @@ function AddPatientForm({ onAdded, disabled }) {
 
   async function save() {
     if (!form.patient_id || !form.name) { setMsg("ID and Name are required"); return; }
-    if (disabled) { setMsg("Adding patients requires an internet connection."); return; }
     setLoading(true); setMsg("");
     try {
       await patientsAPI.create({ ...form, age: parseInt(form.age) || null });
@@ -851,10 +599,8 @@ function AddPatientForm({ onAdded, disabled }) {
   const inputS = css({ width:"100%", padding:"10px 14px", borderRadius:8, background:"rgba(59,201,232,0.07)", border:`1px solid ${C.border}`, color:C.text, fontSize:14, outline:"none", boxSizing:"border-box", fontFamily:"inherit" });
 
   if (!open) return (
-    <button onClick={() => !disabled && setOpen(true)} disabled={disabled}
-      title={disabled ? "Adding patients requires an internet connection" : undefined}
-      style={css({ padding:"10px 20px", borderRadius:10, border:"none", background: disabled ? "rgba(59,201,232,0.3)" : C.accent, color:C.bg, fontWeight:700, fontSize: mobile ? 13 : 15, cursor: disabled ? "not-allowed" : "pointer" })}>
-      {disabled ? "📵 Offline" : "+ Add Patient"}
+    <button onClick={() => setOpen(true)} style={css({ padding:"10px 20px", borderRadius:10, border:"none", background:C.accent, color:C.bg, fontWeight:700, cursor:"pointer", fontSize: mobile ? 13 : 15 })}>
+      + Add Patient
     </button>
   );
 
@@ -972,28 +718,8 @@ export default function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("healnet_user")); } catch { return null; }
   });
-
-  const network = useNetwork();
-
   function handleLogin(u)  { setUser(u); }
-  function handleLogout()  {
-    localStorage.removeItem("healnet_token");
-    localStorage.removeItem("healnet_user");
-    setUser(null);
-  }
-
-  return (
-    <>
-      <OfflineBanner
-        isOnline={network.isOnline}
-        syncing={network.syncing}
-        pendingCount={network.pendingCount}
-        lastSyncedAt={network.lastSyncedAt}
-      />
-      {!user
-        ? <LoginPage onLogin={handleLogin} />
-        : <Dashboard user={user} onLogout={handleLogout} network={network} />
-      }
-    </>
-  );
+  function handleLogout()  { localStorage.removeItem("healnet_token"); localStorage.removeItem("healnet_user"); setUser(null); }
+  if (!user) return <LoginPage onLogin={handleLogin} />;
+  return <Dashboard user={user} onLogout={handleLogout} />;
 }

@@ -1,6 +1,6 @@
 import axios from "axios";
 const API = axios.create({
-  baseURL: "https://healnet-web-production.up.railway.app/api",
+  baseURL: "https://healnet-api-docker.onrender.com/api",
 });
 // ── Auto-attach token to every request ───────────────────────────
 API.interceptors.request.use((config) => {
@@ -22,9 +22,10 @@ API.interceptors.response.use(
 );
 // ── AUTH ──────────────────────────────────────────────────────────
 export const authAPI = {
-  login:  (email, password)             => API.post("/auth/login",  { email, password }),
-  signup: (name, email, password, kind) => API.post("/auth/signup", { name, email, password, kind }),
-  me:     ()                            => API.get("/auth/me"),
+  login:       (email, password)             => API.post("/auth/login",  { email, password }),
+  signup:      (name, email, password, kind) => API.post("/auth/signup", { name, email, password, kind }),
+  me:          ()                            => API.get("/auth/me"),
+  googleLogin: (idToken)                     => API.post("/auth/google", { id_token: idToken }),
 };
 // ── PATIENTS ──────────────────────────────────────────────────────
 export const patientsAPI = {
@@ -114,5 +115,16 @@ export const timelineAPI = {
     return API.get(`/timeline/${id}${params ? `?${params}` : ""}`);
   },
   getCategories: (id) => API.get(`/timeline/${id}/categories`),
+};
+
+// ── BLOOD REPORTS ─────────────────────────────────────────────────
+export const bloodReportsAPI = {
+  upload: (patientId, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return API.post(`/blood-reports/${patientId}`, form);
+  },
+  getForPatient: (patientId) => API.get(`/blood-reports/${patientId}`),
+  delete: (reportId) => API.delete(`/blood-reports/report/${reportId}`),
 };
 export default API;

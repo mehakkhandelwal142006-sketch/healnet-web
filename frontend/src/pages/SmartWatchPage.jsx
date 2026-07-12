@@ -911,8 +911,9 @@ function ReportsTab({ latestResult, isOnline }) {
 // ═══════════════════════════════════════════════════════════════════
 //  MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════
-export default function SmartWatchPage() {
+export default function SmartWatchPage({ patients }) {
   const [tab, setTab]             = useState("csv");
+  const [selPatient, setSelPatient] = useState("");
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState("");
   const [result, setResult]       = useState(null);
@@ -967,10 +968,11 @@ export default function SmartWatchPage() {
 
   async function handleCSV(e) {
     const file = e.target.files[0]; if (!file) return;
+    if (!selPatient) { setError("Select a patient first, so this data can be saved to their record."); return; }
     // CSV upload requires a backend parse call — needs connectivity
     if (offline) { setError("CSV upload requires an internet connection to parse the file."); return; }
     setLoading(true); setError(""); setResult(null);
-    try { const res = await smartwatchAPI.uploadCSV(file); setResultAndCache(res.data); }
+    try { const res = await smartwatchAPI.uploadCSV(file, selPatient); setResultAndCache(res.data); }
     catch (err) { setError(err.response?.data?.detail || "Failed to parse CSV"); }
     setLoading(false);
   }
@@ -984,6 +986,7 @@ export default function SmartWatchPage() {
 
   async function fetchGoogleFitData() {
     if (!fitToken) return;
+    if (!selPatient) { setError("Select a patient first, so this data can be saved to their record."); return; }
 
     if (offline) {
       // Show cached result if we have one
@@ -997,7 +1000,7 @@ export default function SmartWatchPage() {
 
     setLoading(true); setError(""); setResult(null);
     try {
-      const res = await smartwatchAPI.googleFitData(fitToken, days);
+      const res = await smartwatchAPI.googleFitData(fitToken, days, selPatient);
       setResultAndCache(res.data);
       if (res.data.token) {
         localStorage.setItem("google_fit_token", JSON.stringify(res.data.token));
@@ -1033,6 +1036,28 @@ export default function SmartWatchPage() {
       </p>
 
       {/* Offline status is shown globally by the app-root OfflineBanner */}
+
+      {/* ── Patient selector — required so synced data is saved against a specific patient ── */}
+      <select value={selPatient} onChange={e => setSelPatient(e.target.value)}
+        style={{
+          width: "100%", padding: "10px 16px", borderRadius: 10,
+          background: "rgba(59,201,232,0.07)", border: `1px solid ${C.border}`,
+          color: C.text, fontSize: 14, outline: "none",
+          boxSizing: "border-box", marginBottom: 20,
+        }}>
+        <option value="">— Select a patient to sync data for —</option>
+        {(patients || []).map(p => (
+          <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>
+        ))}
+      </select>
+      {!selPatient && (
+        <div style={{
+          background: "rgba(255,209,102,0.08)", border: `1px solid ${C.warn}33`,
+          borderRadius: 10, padding: "10px 16px", marginBottom: 20, fontSize: 13, color: C.warn,
+        }}>
+          ⚠️ Select a patient above before uploading or syncing — otherwise data won't be saved to anyone's record.
+        </div>
+      )}
 
       {/* Tab bar */}
       <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>

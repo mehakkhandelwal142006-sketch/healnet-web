@@ -1,0 +1,23 @@
+{
+  "appId": "com.iotrenetics.healnet",
+  "appName": "HealNet",
+  "webDir": "build",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#030c2c"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "backgroundColor": "#030c2c",
+      "showSpinner": false
+    },
+    "GoogleAuth": {
+      "scopes": ["profile", "email"],
+      "serverClientId": "560479363796-6c16e4olgj39bcplh8r0egc2d5klb0gv.apps.googleusercontent.com",
+      "forceCodeForRefreshToken": true
+    }
+  }
+}
