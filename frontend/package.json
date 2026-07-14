@@ -1,3 +1,4 @@
+"@codetrix-studio/capacitor-google-auth": "^3.1.0"
 {
   "name": "healnet-frontend",
   "version": "1.0.0",
