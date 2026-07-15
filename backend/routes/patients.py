@@ -67,14 +67,16 @@ class PatientCreate(BaseModel):
 
 
 # ── GET ALL ─────────────────────────────────────────────────────
-# org        -> every patient in the system
-# solo/staff -> only patients they created
+# Every account only ever sees patients they created - no exceptions
+# for any account type (solo/staff/org).
 @router.get("/")
 def get_all_patients(authorization: Optional[str] = Header(None)):
     auth = get_auth_user(authorization)
-    query = supabase.table("patients").select("*").order("created_at", desc=True)
-    if not auth.is_org:
-        query = query.eq("created_by", auth.user_id)
+    query = (
+        supabase.table("patients").select("*")
+        .eq("created_by", auth.user_id)
+        .order("created_at", desc=True)
+    )
     result = query.execute()
     return result.data
 
@@ -83,9 +85,11 @@ def get_all_patients(authorization: Optional[str] = Header(None)):
 @router.get("/search/{query}")
 def search_patients(query: str, authorization: Optional[str] = Header(None)):
     auth = get_auth_user(authorization)
-    q = supabase.table("patients").select("*").ilike("name", f"%{query}%")
-    if not auth.is_org:
-        q = q.eq("created_by", auth.user_id)
+    q = (
+        supabase.table("patients").select("*")
+        .ilike("name", f"%{query}%")
+        .eq("created_by", auth.user_id)
+    )
     result = q.execute()
     return result.data
 
@@ -94,9 +98,11 @@ def search_patients(query: str, authorization: Optional[str] = Header(None)):
 @router.get("/{patient_id}")
 def get_patient(patient_id: str, authorization: Optional[str] = Header(None)):
     auth = get_auth_user(authorization)
-    q = supabase.table("patients").select("*").eq("patient_id", patient_id)
-    if not auth.is_org:
-        q = q.eq("created_by", auth.user_id)
+    q = (
+        supabase.table("patients").select("*")
+        .eq("patient_id", patient_id)
+        .eq("created_by", auth.user_id)
+    )
     result = q.execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Patient not found")
@@ -124,15 +130,16 @@ def create_patient(body: PatientCreate, authorization: Optional[str] = Header(No
 
 
 # ── UPDATE ──────────────────────────────────────────────────────
-# org        -> can update any patient
-# solo/staff -> only their own
+# Every account can only update patients they created.
 @router.put("/{patient_id}")
 def update_patient(patient_id: str, body: dict, authorization: Optional[str] = Header(None)):
     auth = get_auth_user(authorization)
     body.pop("patient_id", None)
-    q = supabase.table("patients").update(body).eq("patient_id", patient_id)
-    if not auth.is_org:
-        q = q.eq("created_by", auth.user_id)
+    q = (
+        supabase.table("patients").update(body)
+        .eq("patient_id", patient_id)
+        .eq("created_by", auth.user_id)
+    )
     result = q.execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Patient not found")
@@ -140,14 +147,15 @@ def update_patient(patient_id: str, body: dict, authorization: Optional[str] = H
 
 
 # ── DELETE ──────────────────────────────────────────────────────
-# org        -> can delete any patient
-# solo/staff -> only their own
+# Every account can only delete patients they created.
 @router.delete("/{patient_id}")
 def delete_patient(patient_id: str, authorization: Optional[str] = Header(None)):
     auth = get_auth_user(authorization)
-    q = supabase.table("patients").delete().eq("patient_id", patient_id)
-    if not auth.is_org:
-        q = q.eq("created_by", auth.user_id)
+    q = (
+        supabase.table("patients").delete()
+        .eq("patient_id", patient_id)
+        .eq("created_by", auth.user_id)
+    )
     result = q.execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Patient not found")
