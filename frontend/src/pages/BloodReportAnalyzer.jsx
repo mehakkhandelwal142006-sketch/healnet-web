@@ -19,6 +19,37 @@ function explanationSentence(v) {
   return `${v.label} is ${v.value} ${v.unit}, which is ${dir} than the normal range (${v.low}–${v.high} ${v.unit}).`;
 }
 
+// ── General wellness guidance for abnormal results ──────────────────
+// These are general, non-prescriptive lifestyle suggestions - not a
+// treatment plan. Always paired with a "consult a doctor" note in the UI.
+const IMPROVEMENT_TIPS = {
+  hemoglobin:    { low: "Consider iron-rich foods (leafy greens, legumes, lean meat) with vitamin C to aid absorption.", high: "Stay well hydrated; ask your doctor to check for an underlying cause." },
+  rbc:           { low: "Similar to low hemoglobin — iron-rich foods and follow-up bloodwork can help identify the cause.", high: "Discuss with your doctor, especially if you smoke or live at high altitude." },
+  wbc:           { high: "May indicate infection or inflammation — a doctor can help identify the cause.", low: "A doctor can help evaluate immune system health." },
+  platelets:     { low: "Avoid activities with injury/bleeding risk until this is evaluated by a doctor.", high: "A doctor can help identify the underlying cause." },
+  hematocrit:    { low: "Often linked to low hemoglobin — see the hemoglobin tip above.", high: "Stay well hydrated and discuss with your doctor." },
+  glucose:       { high: "Reduce refined sugar/carbs, increase physical activity, and monitor levels regularly.", low: "Eat small, balanced meals through the day; avoid skipping meals." },
+  cholesterol:   { high: "Reduce saturated/fried foods, increase fiber (oats, fruits, vegetables), and add regular aerobic exercise.", low: "Generally not a concern, but mention it to your doctor." },
+  hdl:           { low: "Regular aerobic exercise and healthy fats (nuts, olive oil, fish) can help raise HDL over time.", high: "This is generally favorable." },
+  ldl:           { high: "Reduce saturated fats and fried foods; increase fiber and regular exercise.", low: "Generally not a concern." },
+  triglycerides: { high: "Limit sugar, alcohol, and refined carbs; increase omega-3s (fish, walnuts) and activity.", low: "Generally not a concern." },
+  creatinine:    { high: "Stay well hydrated and ask your doctor to assess kidney function.", low: "Usually not concerning on its own." },
+  urea:          { high: "Can relate to hydration or kidney function — worth discussing with a doctor.", low: "Usually not concerning on its own." },
+  sgpt:          { high: "Limit alcohol intake; a doctor can help evaluate liver health further.", low: "Usually not concerning." },
+  sgot:          { high: "Limit alcohol intake; a doctor can help evaluate liver health further.", low: "Usually not concerning." },
+  tsh:           { high: "May suggest an underactive thyroid — a doctor can confirm with further tests.", low: "May suggest an overactive thyroid — a doctor can confirm with further tests." },
+  vitamind:      { low: "More sun exposure and vitamin D-rich foods (fatty fish, fortified dairy) may help; ask about supplements.", high: "Discuss with your doctor, especially if taking supplements." },
+  vitaminb12:    { low: "Include more dairy, eggs, and fortified cereals; ask your doctor about supplementation.", high: "Usually not concerning." },
+  calcium:       { low: "Increase dairy, leafy greens, and calcium-fortified foods.", high: "A doctor can help identify the underlying cause." },
+  sodium:        { high: "Reduce salt intake and stay hydrated.", low: "A doctor can help evaluate the cause." },
+  potassium:     { high: "A doctor can help evaluate the cause, especially if you're on certain medications.", low: "Bananas, potatoes, and leafy greens are good dietary sources." },
+};
+
+function improvementTip(v) {
+  if (v.status === "normal") return null;
+  return IMPROVEMENT_TIPS[v.key]?.[v.status] || null;
+}
+
 function ValueCard({ v, prev }) {
   const style = STATUS_STYLE[v.status];
   const prevValue = prev?.values?.find(p => p.key === v.key);
@@ -155,14 +186,37 @@ export default function BloodReportAnalyzer({ patients }) {
             style={{ display: "none" }}
             id="blood-report-upload"
           />
+
+          {/* Spinner animation keyframes */}
+          <style>{`
+            @keyframes healnet-spin {
+              from { transform: rotate(0deg); }
+              to { transform: rotate(360deg); }
+            }
+          `}</style>
+
           <label htmlFor="blood-report-upload"
             style={{
-              display: "block", textAlign: "center", padding: "20px",
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              gap: 10, textAlign: "center", padding: "24px",
               border: `2px dashed ${C.border}`, borderRadius: 12,
               color: uploading ? C.muted : C.accent, cursor: uploading ? "default" : "pointer",
               marginBottom: 20, fontSize: 14, fontWeight: 600,
             }}>
-            {uploading ? "Uploading & analyzing (this can take 10-20 seconds)..." : "📄 Tap to upload a blood report (PDF or photo)"}
+            {uploading ? (
+              <>
+                <div style={{
+                  width: 32, height: 32, borderRadius: "50%",
+                  border: `3px solid ${C.border}`,
+                  borderTopColor: C.accent,
+                  animation: "healnet-spin 0.8s linear infinite",
+                }} />
+                <span>Uploading &amp; analyzing report...</span>
+                <span style={{ fontSize: 11, color: C.muted, fontWeight: 400 }}>This can take 10-20 seconds</span>
+              </>
+            ) : (
+              <span>📄 Tap to upload a blood report (PDF or photo)</span>
+            )}
           </label>
 
           {error && (
@@ -220,14 +274,30 @@ export default function BloodReportAnalyzer({ patients }) {
 
               {abnormalValues.length > 0 && (
                 <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, marginBottom: 16 }}>
-                  <h4 style={{ margin: "0 0 12px", color: C.accent, fontSize: 15 }}>📋 What this means</h4>
+                  <h4 style={{ margin: "0 0 12px", color: C.accent, fontSize: 15 }}>📋 What this means & how to improve</h4>
                   {abnormalValues.map((v, i) => (
-                    <div key={i} style={{ fontSize: 13, color: C.text, lineHeight: 1.6, marginBottom: 8 }}>
-                      • {explanationSentence(v)}
+                    <div key={i} style={{
+                      marginBottom: 14, paddingBottom: 14,
+                      borderBottom: i < abnormalValues.length - 1 ? `1px solid ${C.border}` : "none",
+                    }}>
+                      <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6, marginBottom: 6, fontWeight: 600 }}>
+                        {v.label}
+                      </div>
+                      <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6, marginBottom: 6 }}>
+                        {explanationSentence(v)}
+                      </div>
+                      {improvementTip(v) && (
+                        <div style={{
+                          fontSize: 12, color: C.accent2, lineHeight: 1.6,
+                          background: C.accent2 + "0d", borderRadius: 8, padding: "8px 10px", marginTop: 6,
+                        }}>
+                          💡 <strong>How to improve:</strong> {improvementTip(v)}
+                        </div>
+                      )}
                     </div>
                   ))}
                   <div style={{ fontSize: 11, color: C.muted, marginTop: 10, fontStyle: "italic" }}>
-                    This is a rule-based summary, not a medical diagnosis. Please consult a doctor about any abnormal results.
+                    This is general, rule-based guidance — not a medical diagnosis or treatment plan. Please consult a doctor about any abnormal results before making changes.
                   </div>
                 </div>
               )}

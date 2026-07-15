@@ -11,6 +11,7 @@ import HealthScorePage from "./pages/HealthScorePage";
 import SmartAlertsPage from "./pages/SmartAlertsPage";
 import FamilyDashboardPage from "./pages/FamilyDashboardPage";
 import BloodReportAnalyzer from "./pages/BloodReportAnalyzer";
+import RiskPredictionPage from "./pages/RiskPredictionPage";
 import SmartAlertsOverviewBanner from "./pages/SmartAlertsOverviewBanner";
 
 const C = {
@@ -262,6 +263,7 @@ function Dashboard({ user, onLogout }) {
     { id: "smartalerts",  label: "Smart Alerts",  icon: "🧠" },
     { id: "family",       label: "Family",        icon: "👨‍👩‍👧‍👦" },
     { id: "bloodreport",  label: "Blood Reports",  icon: "🩸" },
+    { id: "riskprediction", label: "Risk Prediction", icon: "🧬" },
   ];
 
   function navClick(id) { setPage(id); if (mobile) setSidebarOpen(false); }
@@ -566,6 +568,7 @@ function Dashboard({ user, onLogout }) {
             {page === "smartalerts" && <SmartAlertsPage patients={patients} />}
             {page === "family"      && <FamilyDashboardPage patients={patients} onOpenPatient={openPatient} />}
             {page === "bloodreport" && <BloodReportAnalyzer patients={patients} />}
+            {page === "riskprediction" && <RiskPredictionPage patients={patients} />}
           </>
         )}
       </div>
