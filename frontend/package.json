@@ -11,8 +11,7 @@
     "recharts": "^2.12.2",
     "@capacitor/core": "^6.2.0",
     "@capacitor/cli": "^6.2.0",
-    "@capacitor/android": "^6.2.0",
-    "@codetrix-studio/capacitor-google-auth": "^3.1.0"
+    "@capacitor/android": "^6.2.0"
   },
   "scripts": {
     "start": "react-scripts start",
