@@ -15,20 +15,29 @@ import { CreateMLCEngine } from "@mlc-ai/web-llm";
 
 // Small, fast, good-quality instruction models that run well on a
 // mid-range laptop/phone GPU. Phi-3.5 is the default: strong reasoning
-// for its size (~2.5GB in 4-bit). Gemma-2-2B is a lighter fallback.
+// for its size. Gemma-2-2B is a lighter fallback.
+//
+// Each model has an f16 variant (faster, smaller download) and an f32
+// variant (works on GPUs that don't support the WebGPU "shader-f16"
+// feature — many integrated/mobile GPUs don't). We detect support at
+// runtime and pick automatically so the user never has to know this
+// distinction, or hit a cryptic "Invalid ShaderModule" error.
 export const MODELS = {
   "phi-3.5": {
-    id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
+    f16: "Phi-3.5-mini-instruct-q4f16_1-MLC",
+    f32: "Phi-3.5-mini-instruct-q4f32_1-MLC",
     label: "Phi-3.5 Mini (best quality, ~2.5GB)",
   },
   "gemma-2-2b": {
-    id: "gemma-2-2b-it-q4f16_1-MLC",
+    f16: "gemma-2-2b-it-q4f16_1-MLC",
+    f32: "gemma-2-2b-it-q4f32_1-MLC",
     label: "Gemma 2 2B (lighter, ~1.6GB)",
   },
 };
 
 let enginePromise = null;
 let currentModelKey = null;
+let f16SupportPromise = null;
 
 /** True if this browser can run WebLLM at all. */
 export function isWebGPUAvailable() {
@@ -36,11 +45,36 @@ export function isWebGPUAvailable() {
 }
 
 /**
+ * True if the GPU/browser supports the WebGPU "shader-f16" feature.
+ * Cached after first check. Falls back to false (safer, f32) on any error.
+ */
+export async function supportsShaderF16() {
+  if (f16SupportPromise) return f16SupportPromise;
+  f16SupportPromise = (async () => {
+    try {
+      if (!navigator.gpu) return false;
+      const adapter = await navigator.gpu.requestAdapter();
+      return !!adapter?.features?.has("shader-f16");
+    } catch {
+      return false;
+    }
+  })();
+  return f16SupportPromise;
+}
+
+/** Resolve which actual model id will be used for a given model key, and whether it's the fast (f16) or compatibility (f32) variant. */
+export async function resolveModelVariant(modelKey = "phi-3.5") {
+  const entry = MODELS[modelKey] ?? MODELS["phi-3.5"];
+  const hasF16 = await supportsShaderF16();
+  return { modelId: hasF16 ? entry.f16 : entry.f32, usesF16: hasF16 };
+}
+
+/**
  * Load (or reuse) the engine for a given model.
  * @param {string} modelKey - key into MODELS, e.g. "phi-3.5"
  * @param {(report: {progress:number, text:string}) => void} onProgress
  */
-export function getEngine(modelKey = "phi-3.5", onProgress) {
+export async function getEngine(modelKey = "phi-3.5", onProgress) {
   if (enginePromise && currentModelKey === modelKey) return enginePromise;
 
   if (!isWebGPUAvailable()) {
@@ -52,11 +86,12 @@ export function getEngine(modelKey = "phi-3.5", onProgress) {
   }
 
   currentModelKey = modelKey;
-  const modelId = MODELS[modelKey]?.id ?? MODELS["phi-3.5"].id;
+  const { modelId, usesF16 } = await resolveModelVariant(modelKey);
 
   enginePromise = CreateMLCEngine(modelId, {
     initProgressCallback: (report) => {
-      onProgress?.({ progress: report.progress ?? 0, text: report.text ?? "" });
+      const prefix = usesF16 ? "" : "[Compatibility mode] ";
+      onProgress?.({ progress: report.progress ?? 0, text: prefix + (report.text ?? "") });
     },
   });
 
