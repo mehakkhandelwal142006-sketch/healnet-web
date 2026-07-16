@@ -88,14 +88,31 @@ export async function getEngine(modelKey = "phi-3.5", onProgress) {
   currentModelKey = modelKey;
   const { modelId, usesF16 } = await resolveModelVariant(modelKey);
 
-  enginePromise = CreateMLCEngine(modelId, {
+  const createPromise = CreateMLCEngine(modelId, {
     initProgressCallback: (report) => {
       const prefix = usesF16 ? "" : "[Compatibility mode] ";
       onProgress?.({ progress: report.progress ?? 0, text: prefix + (report.text ?? "") });
     },
   });
 
+  enginePromise = createPromise;
+
+  // If engine creation itself fails, clear the cache so the next attempt
+  // starts fresh instead of retrying against a broken promise.
+  createPromise.catch(() => {
+    if (enginePromise === createPromise) {
+      enginePromise = null;
+      currentModelKey = null;
+    }
+  });
+
   return enginePromise;
+}
+
+/** Force-clear the cached engine (e.g. after a runtime error like "Object has already been disposed"), without trying to call .unload() on a possibly-broken instance. */
+export function resetEngine() {
+  enginePromise = null;
+  currentModelKey = null;
 }
 
 /**
@@ -105,21 +122,29 @@ export async function getEngine(modelKey = "phi-3.5", onProgress) {
 export async function streamChat({ modelKey, messages, onToken, onProgress, temperature = 0.4 }) {
   const engine = await getEngine(modelKey, onProgress);
 
-  const chunks = await engine.chat.completions.create({
-    messages,
-    temperature,
-    stream: true,
-  });
+  try {
+    const chunks = await engine.chat.completions.create({
+      messages,
+      temperature,
+      stream: true,
+    });
 
-  let full = "";
-  for await (const chunk of chunks) {
-    const delta = chunk.choices?.[0]?.delta?.content || "";
-    if (delta) {
-      full += delta;
-      onToken?.(delta, full);
+    let full = "";
+    for await (const chunk of chunks) {
+      const delta = chunk.choices?.[0]?.delta?.content || "";
+      if (delta) {
+        full += delta;
+        onToken?.(delta, full);
+      }
     }
+    return full;
+  } catch (e) {
+    // Runtime errors (e.g. "Object has already been disposed") mean the
+    // cached engine instance is broken — clear it so the next attempt
+    // creates a fresh one instead of repeatedly hitting the same error.
+    resetEngine();
+    throw e;
   }
-  return full;
 }
 
 /** Unload the model to free GPU/RAM (e.g. when leaving the Copilot page). */
