@@ -48,6 +48,7 @@ export default function CopilotPage({ patients = [] }) {
   const [input, setInput]         = useState("");
   const [streaming, setStreaming] = useState(false);
   const chatEndRef = useRef(null);
+  const initializingRef = useRef(false);
 
   const gpuOk = isWebGPUAvailable();
 
@@ -62,7 +63,8 @@ export default function CopilotPage({ patients = [] }) {
   useEffect(() => () => { unloadEngine(); }, []); // unload model when leaving page
 
   const initialize = useCallback(async () => {
-    if (!patientId) return;
+    if (!patientId || initializingRef.current) return;
+    initializingRef.current = true;
     setSetupError(""); setMessages([]); setDocs([]); setStage("loading-model");
     try {
       // Step 1: warm up the LLM (downloads/loads the model, cached after first time)
@@ -91,9 +93,11 @@ export default function CopilotPage({ patients = [] }) {
         role: "assistant",
         content: `I've loaded and indexed your health data locally (${summarizeDocumentCounts(rawDocs)}). Everything from here runs entirely on this device — ask me anything, or use a quick action below.`,
       }]);
-    } catch (e) {
+   } catch (e) {
       setSetupError(e.message || "Something went wrong setting up the local AI.");
       setStage("error");
+    } finally {
+      initializingRef.current = false;
     }
   }, [patientId, modelKey]);
 
