@@ -35,6 +35,10 @@ export const MODELS = {
   },
 };
 
+// Model key used as an automatic fallback when a heavier model's GPU
+// device is lost (usually due to insufficient VRAM).
+export const FALLBACK_MODEL_KEY = "gemma-2-2b";
+
 let enginePromise = null;
 let currentModelKey = null;
 let f16SupportPromise = null;
@@ -42,6 +46,25 @@ let f16SupportPromise = null;
 /** True if this browser can run WebLLM at all. */
 export function isWebGPUAvailable() {
   return typeof navigator !== "undefined" && !!navigator.gpu;
+}
+
+/**
+ * True if this error looks like a WebGPU "device lost" / disposed-object
+ * error, as opposed to some other failure (network, parsing, etc).
+ * These happen when the GPU runs out of memory or the OS/browser
+ * reclaims the device mid-load, and they leave the previous engine
+ * instance permanently unusable (any further call throws "Object has
+ * already been disposed").
+ */
+export function isDeviceLostError(e) {
+  const msg = String(e?.message || e || "").toLowerCase();
+  return (
+    msg.includes("device was lost") ||
+    msg.includes("device has been lost") ||
+    msg.includes("already been disposed") ||
+    msg.includes("gpudevicelostinfo") ||
+    msg.includes("out of memory")
+  );
 }
 
 /**
@@ -152,7 +175,54 @@ export async function streamChat({ modelKey, messages, onToken, onProgress, temp
     // cached engine instance is broken — clear it so the next attempt
     // creates a fresh one instead of repeatedly hitting the same error.
     resetEngine();
+
+    if (isDeviceLostError(e)) {
+      const friendly = new Error(
+        "The GPU ran out of memory or the browser reclaimed it while running the model. Try a lighter model, close other GPU-heavy tabs, or restart the browser."
+      );
+      friendly.isDeviceLost = true;
+      friendly.original = e;
+      throw friendly;
+    }
     throw e;
+  }
+}
+
+/**
+ * Warm up a model, and if its GPU device is lost (commonly an
+ * out-of-memory condition on the requested model), automatically
+ * retry once with the lighter FALLBACK_MODEL_KEY. Returns the model
+ * key that actually succeeded, so callers can update their UI/state
+ * to reflect what's really loaded.
+ *
+ * @param {string} modelKey
+ * @param {(report:{progress:number, text:string}) => void} onProgress
+ * @returns {Promise<{usedModelKey: string, fellBack: boolean}>}
+ */
+export async function warmUpWithFallback(modelKey, onProgress) {
+  try {
+    await streamChat({
+      modelKey,
+      messages: [{ role: "user", content: "hi" }],
+      onToken: () => {},
+      onProgress,
+    });
+    return { usedModelKey: modelKey, fellBack: false };
+  } catch (e) {
+    const canFallBack = isDeviceLostError(e) && modelKey !== FALLBACK_MODEL_KEY;
+    if (!canFallBack) throw e;
+
+    onProgress?.({ progress: 0, text: `Switching to a lighter model (${MODELS[FALLBACK_MODEL_KEY].label})...` });
+
+    // Fresh attempt with the lighter model. If this also fails, let the
+    // error propagate as-is — we only auto-fallback once.
+    await streamChat({
+      modelKey: FALLBACK_MODEL_KEY,
+      messages: [{ role: "user", content: "hi" }],
+      onToken: () => {},
+      onProgress,
+    });
+    return { usedModelKey: FALLBACK_MODEL_KEY, fellBack: true };
   }
 }
 
