@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { authAPI, patientsAPI, vitalsAPI, alertsAPI } from "./services/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { GoogleAuth } from "@codetrix-studio/capacitor-google-auth";
@@ -13,6 +13,7 @@ import FamilyDashboardPage from "./pages/FamilyDashboardPage";
 import BloodReportAnalyzer from "./pages/BloodReportAnalyzer";
 import RiskPredictionPage from "./pages/RiskPredictionPage";
 import SmartAlertsOverviewBanner from "./pages/SmartAlertsOverviewBanner";
+const CopilotPage = lazy(() => import("./pages/CopilotPage"));
 
 const C = {
   bg:     "#030c2c",
@@ -264,6 +265,7 @@ function Dashboard({ user, onLogout }) {
     { id: "family",       label: "Family",        icon: "👨‍👩‍👧‍👦" },
     { id: "bloodreport",  label: "Blood Reports",  icon: "🩸" },
     { id: "riskprediction", label: "Risk Prediction", icon: "🧬" },
+    { id: "copilot",        label: "AI Copilot",      icon: "🧠" },
   ];
 
   function navClick(id) { setPage(id); if (mobile) setSidebarOpen(false); }
@@ -569,6 +571,11 @@ function Dashboard({ user, onLogout }) {
             {page === "family"      && <FamilyDashboardPage patients={patients} onOpenPatient={openPatient} onLinked={load} />}
             {page === "bloodreport" && <BloodReportAnalyzer patients={patients} />}
             {page === "riskprediction" && <RiskPredictionPage patients={patients} />}
+            {page === "copilot" && (
+              <Suspense fallback={<div style={css({ color: C.muted, textAlign: "center", padding: 60 })}>Loading AI Copilot module...</div>}>
+                <CopilotPage patients={patients} />
+              </Suspense>
+            )}
           </>
         )}
       </div>
