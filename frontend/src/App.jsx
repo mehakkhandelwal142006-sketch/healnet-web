@@ -566,7 +566,7 @@ function Dashboard({ user, onLogout }) {
             {page === "timeline"    && <TimelinePage    patients={patients} />}
             {page === "healthscore" && <HealthScorePage patients={patients} />}
             {page === "smartalerts" && <SmartAlertsPage patients={patients} />}
-            {page === "family"      && <FamilyDashboardPage patients={patients} onOpenPatient={openPatient} />}
+            {page === "family"      && <FamilyDashboardPage patients={patients} onOpenPatient={openPatient} onLinked={load} />}
             {page === "bloodreport" && <BloodReportAnalyzer patients={patients} />}
             {page === "riskprediction" && <RiskPredictionPage patients={patients} />}
           </>

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional
 from database import supabase
+from services.patient_access import get_accessible_patient_ids
 import jwt
 import os
 
@@ -67,18 +68,25 @@ class PatientCreate(BaseModel):
 
 
 # ── GET ALL ─────────────────────────────────────────────────────
-# Every account only ever sees patients they created - no exceptions
-# for any account type (solo/staff/org).
+# Includes patients this account owns AND patients shared with it via
+# a redeemed QR link. Each patient is tagged with "access": "owner" or
+# "shared" so the frontend can show a badge / adjust the UI if needed.
 @router.get("/")
 def get_all_patients(authorization: Optional[str] = Header(None)):
     auth = get_auth_user(authorization)
-    query = (
+    ids = get_accessible_patient_ids(auth.user_id)
+    if not ids:
+        return []
+    result = (
         supabase.table("patients").select("*")
-        .eq("created_by", auth.user_id)
+        .in_("patient_id", ids)
         .order("created_at", desc=True)
+        .execute()
     )
-    result = query.execute()
-    return result.data
+    patients = result.data or []
+    for p in patients:
+        p["access"] = "owner" if p.get("created_by") == auth.user_id else "shared"
+    return patients
 
 
 # ── SEARCH ──────────────────────────────────────────────────────
@@ -98,12 +106,10 @@ def search_patients(query: str, authorization: Optional[str] = Header(None)):
 @router.get("/{patient_id}")
 def get_patient(patient_id: str, authorization: Optional[str] = Header(None)):
     auth = get_auth_user(authorization)
-    q = (
-        supabase.table("patients").select("*")
-        .eq("patient_id", patient_id)
-        .eq("created_by", auth.user_id)
-    )
-    result = q.execute()
+    ids = get_accessible_patient_ids(auth.user_id)
+    if patient_id not in ids:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    result = supabase.table("patients").select("*").eq("patient_id", patient_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Patient not found")
     return result.data[0]
@@ -130,17 +136,15 @@ def create_patient(body: PatientCreate, authorization: Optional[str] = Header(No
 
 
 # ── UPDATE ──────────────────────────────────────────────────────
-# Every account can only update patients they created.
+# Owners and full-access shared users can both update.
 @router.put("/{patient_id}")
 def update_patient(patient_id: str, body: dict, authorization: Optional[str] = Header(None)):
     auth = get_auth_user(authorization)
+    ids = get_accessible_patient_ids(auth.user_id)
+    if patient_id not in ids:
+        raise HTTPException(status_code=404, detail="Patient not found")
     body.pop("patient_id", None)
-    q = (
-        supabase.table("patients").update(body)
-        .eq("patient_id", patient_id)
-        .eq("created_by", auth.user_id)
-    )
-    result = q.execute()
+    result = supabase.table("patients").update(body).eq("patient_id", patient_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Patient not found")
     return result.data[0]

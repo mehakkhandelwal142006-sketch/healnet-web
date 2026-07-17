@@ -1,6 +1,6 @@
 import axios from "axios";
 const API = axios.create({
-  baseURL: "https://healnet-api-docker.onrender.com",
+  baseURL: "https://healnet-api-docker.onrender.com/api",
 });
 // ── Auto-attach token to every request ───────────────────────────
 API.interceptors.request.use((config) => {
@@ -127,4 +127,13 @@ export const bloodReportsAPI = {
   getForPatient: (patientId) => API.get(`/blood-reports/${patientId}`),
   delete: (reportId) => API.delete(`/blood-reports/report/${reportId}`),
 };
+
+// ── PATIENT SHARES (QR family linking) ───────────────────────────
+export const patientSharesAPI = {
+  createShare:    (patientId) => API.post(`/patient-shares/${patientId}`),
+  redeem:         (token)     => API.post(`/patient-shares/redeem`, { token }),
+  getSharedWithMe: ()         => API.get(`/patient-shares/shared-with-me`),
+  revoke:         (shareId)   => API.delete(`/patient-shares/${shareId}`),
+};
+
 export default API;

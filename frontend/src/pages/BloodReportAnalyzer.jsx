@@ -25,8 +25,8 @@ function explanationSentence(v) {
 const IMPROVEMENT_TIPS = {
   hemoglobin:    { low: "Consider iron-rich foods (leafy greens, legumes, lean meat) with vitamin C to aid absorption.", high: "Stay well hydrated; ask your doctor to check for an underlying cause." },
   rbc:           { low: "Similar to low hemoglobin — iron-rich foods and follow-up bloodwork can help identify the cause.", high: "Discuss with your doctor, especially if you smoke or live at high altitude." },
-  wbc:           { high: "May indicate infection or inflammation — a doctor can help identify the cause.", low: "A doctor can help evaluate immune system health." },
-  platelets:     { low: "Avoid activities with injury/bleeding risk until this is evaluated by a doctor.", high: "A doctor can help identify the underlying cause." },
+  wbc:           { high: "May indicate infection or inflammation — consult a doctor.", low: "Consult a doctor" },
+  platelets:     { low: "Avoid activities with injury/bleeding risk until this is evaluated by a doctor.", high: "Consult a doctor" },
   hematocrit:    { low: "Often linked to low hemoglobin — see the hemoglobin tip above.", high: "Stay well hydrated and discuss with your doctor." },
   glucose:       { high: "Reduce refined sugar/carbs, increase physical activity, and monitor levels regularly.", low: "Eat small, balanced meals through the day; avoid skipping meals." },
   cholesterol:   { high: "Reduce saturated/fried foods, increase fiber (oats, fruits, vegetables), and add regular aerobic exercise.", low: "Generally not a concern, but mention it to your doctor." },
@@ -38,10 +38,10 @@ const IMPROVEMENT_TIPS = {
   sgpt:          { high: "Limit alcohol intake; a doctor can help evaluate liver health further.", low: "Usually not concerning." },
   sgot:          { high: "Limit alcohol intake; a doctor can help evaluate liver health further.", low: "Usually not concerning." },
   tsh:           { high: "May suggest an underactive thyroid — a doctor can confirm with further tests.", low: "May suggest an overactive thyroid — a doctor can confirm with further tests." },
-  vitamind:      { low: "More sun exposure and vitamin D-rich foods (fatty fish, fortified dairy) may help; ask about supplements.", high: "Discuss with your doctor, especially if taking supplements." },
+  vitamind:      { low: "More sun exposure and vitamin D-rich foods (fatty fish, fortified dairy) may help; ask about supplements.", high: "Consult with your doctor, especially if taking supplements." },
   vitaminb12:    { low: "Include more dairy, eggs, and fortified cereals; ask your doctor about supplementation.", high: "Usually not concerning." },
-  calcium:       { low: "Increase dairy, leafy greens, and calcium-fortified foods.", high: "A doctor can help identify the underlying cause." },
-  sodium:        { high: "Reduce salt intake and stay hydrated.", low: "A doctor can help evaluate the cause." },
+  calcium:       { low: "Increase dairy, leafy greens, and calcium-fortified foods.", high: "Consult a doctor" },
+  sodium:        { high: "Reduce salt intake and stay hydrated.", low: "Consult a doctor" },
   potassium:     { high: "A doctor can help evaluate the cause, especially if you're on certain medications.", low: "Bananas, potatoes, and leafy greens are good dietary sources." },
 };
 
