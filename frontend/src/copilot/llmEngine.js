@@ -71,10 +71,17 @@ export async function resolveModelVariant(modelKey = "phi-3.5") {
 
 /**
  * Load (or reuse) the engine for a given model.
+ * IMPORTANT: this is intentionally a plain (non-async) function that
+ * caches `enginePromise` synchronously before doing any awaiting. If
+ * this were `async` and awaited before caching, two near-simultaneous
+ * calls (e.g. a fast double-click) could both slip past the "already
+ * loading" check and each try to create a competing engine — which is
+ * exactly what causes GPU-level "Object has already been disposed"
+ * errors, since two engines fight over the same WebGPU device.
  * @param {string} modelKey - key into MODELS, e.g. "phi-3.5"
  * @param {(report: {progress:number, text:string}) => void} onProgress
  */
-export async function getEngine(modelKey = "phi-3.5", onProgress) {
+export function getEngine(modelKey = "phi-3.5", onProgress) {
   if (enginePromise && currentModelKey === modelKey) return enginePromise;
 
   if (!isWebGPUAvailable()) {
@@ -86,19 +93,21 @@ export async function getEngine(modelKey = "phi-3.5", onProgress) {
   }
 
   currentModelKey = modelKey;
-  const { modelId, usesF16 } = await resolveModelVariant(modelKey);
 
-  const createPromise = CreateMLCEngine(modelId, {
-    initProgressCallback: (report) => {
-      const prefix = usesF16 ? "" : "[Compatibility mode] ";
-      onProgress?.({ progress: report.progress ?? 0, text: prefix + (report.text ?? "") });
-    },
-  });
+  const createPromise = (async () => {
+    const { modelId, usesF16 } = await resolveModelVariant(modelKey);
+    return CreateMLCEngine(modelId, {
+      initProgressCallback: (report) => {
+        const prefix = usesF16 ? "" : "[Compatibility mode] ";
+        onProgress?.({ progress: report.progress ?? 0, text: prefix + (report.text ?? "") });
+      },
+    });
+  })();
 
+  // Cache immediately (synchronously, in this same tick) so any other
+  // call to getEngine() made before this resolves sees it right away.
   enginePromise = createPromise;
 
-  // If engine creation itself fails, clear the cache so the next attempt
-  // starts fresh instead of retrying against a broken promise.
   createPromise.catch(() => {
     if (enginePromise === createPromise) {
       enginePromise = null;
