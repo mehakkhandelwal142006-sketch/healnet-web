@@ -62,25 +62,36 @@ export default function CopilotPage({ patients = [] }) {
 
   useEffect(() => () => { unloadEngine(); }, []); // unload model when leaving page
 
-  const initialize = useCallback(async () => {
+
+const initialize = useCallback(async () => {
     if (!patientId || initializingRef.current) return;
     initializingRef.current = true;
     setSetupError(""); setMessages([]); setDocs([]); setStage("loading-model");
+
+    // Step 1: warm up the LLM (downloads/loads the model, cached after first time)
     try {
-      // Step 1: warm up the LLM (downloads/loads the model, cached after first time)
       await streamChat({
         modelKey,
         messages: [{ role: "user", content: "hi" }],
         onToken: () => {},
         onProgress: (r) => { setLoadPct(Math.round((r.progress || 0) * 100)); setLoadText(r.text || "Loading model..."); },
       });
+    } catch (e) {
+      console.error("[Copilot] LLM warm-up failed:", e);
+      setSetupError(`[Local LLM] ${e.message || "Failed to load the language model."}`);
+      setStage("error");
+      initializingRef.current = false;
+      return;
+    }
 
-      // Step 2: build + embed the patient's health documents
-      setStage("indexing"); setLoadText("Fetching and indexing your health data...");
+    // Step 2: build + embed the patient's health documents
+    setStage("indexing"); setLoadText("Fetching and indexing your health data...");
+    try {
       const rawDocs = await buildPatientDocuments(patientId);
       if (!rawDocs.length) {
         setSetupError("No health data found yet for this patient — add some vitals first so the Copilot has something to work with.");
         setStage("idle");
+        initializingRef.current = false;
         return;
       }
       const indexed = await embedDocuments(rawDocs, (p) => {
@@ -93,14 +104,14 @@ export default function CopilotPage({ patients = [] }) {
         role: "assistant",
         content: `I've loaded and indexed your health data locally (${summarizeDocumentCounts(rawDocs)}). Everything from here runs entirely on this device — ask me anything, or use a quick action below.`,
       }]);
-   } catch (e) {
-      setSetupError(e.message || "Something went wrong setting up the local AI.");
+    } catch (e) {
+      console.error("[Copilot] Embedding/indexing failed:", e);
+      setSetupError(`[Embedding model] ${e.message || "Failed to index your health data."}`);
       setStage("error");
     } finally {
       initializingRef.current = false;
     }
   }, [patientId, modelKey]);
-
   async function ask(promptText) {
     if (!promptText.trim() || streaming || stage !== "ready") return;
     const userMsg = { role: "user", content: promptText };
