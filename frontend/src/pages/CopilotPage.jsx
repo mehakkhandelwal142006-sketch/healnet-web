@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { isWebGPUAvailable, streamChat, unloadEngine, MODELS } from "../copilot/llmEngine";
+import { isWebGPUAvailable, warmUpWithFallback, unloadEngine, MODELS } from "../copilot/llmEngine";
 import { embedDocuments, embedQuery, topK } from "../copilot/vectorStore";
 import { buildPatientDocuments, summarizeDocumentCounts } from "../copilot/healthContextBuilder";
+import { streamChat } from "../copilot/llmEngine";
 import { useNetwork } from "../offline/useNetwork";
 
 const C = {
@@ -42,6 +43,7 @@ export default function CopilotPage({ patients = [] }) {
   const [docs, setDocs]           = useState([]);      // embedded documents
   const [docCounts, setDocCounts] = useState("");
   const [setupError, setSetupError] = useState("");
+  const [fallbackNotice, setFallbackNotice] = useState("");
 
   // Chat state
   const [messages, setMessages]   = useState([]); // {role, content}
@@ -63,19 +65,26 @@ export default function CopilotPage({ patients = [] }) {
   useEffect(() => () => { unloadEngine(); }, []); // unload model when leaving page
 
 
-const initialize = useCallback(async () => {
+  const initialize = useCallback(async () => {
     if (!patientId || initializingRef.current) return;
     initializingRef.current = true;
-    setSetupError(""); setMessages([]); setDocs([]); setStage("loading-model");
+    setSetupError(""); setFallbackNotice(""); setMessages([]); setDocs([]); setStage("loading-model");
 
-    // Step 1: warm up the LLM (downloads/loads the model, cached after first time)
+    // Step 1: warm up the LLM (downloads/loads the model, cached after first time).
+    // If the GPU device is lost while loading the selected model (usually
+    // insufficient VRAM), automatically retry once with a lighter model.
     try {
-      await streamChat({
-        modelKey,
-        messages: [{ role: "user", content: "hi" }],
-        onToken: () => {},
-        onProgress: (r) => { setLoadPct(Math.round((r.progress || 0) * 100)); setLoadText(r.text || "Loading model..."); },
+      const { usedModelKey, fellBack } = await warmUpWithFallback(modelKey, (r) => {
+        setLoadPct(Math.round((r.progress || 0) * 100));
+        setLoadText(r.text || "Loading model...");
       });
+
+      if (fellBack) {
+        setModelKey(usedModelKey);
+        setFallbackNotice(
+          `⚠️ Your GPU didn't have enough memory for the selected model, so we automatically switched to ${MODELS[usedModelKey].label}.`
+        );
+      }
     } catch (e) {
       console.error("[Copilot] LLM warm-up failed:", e);
       setSetupError(`[Local LLM] ${e.message || "Failed to load the language model."}`);
@@ -223,8 +232,17 @@ const initialize = useCallback(async () => {
           </p>
         )}
 
+        {fallbackNotice && (
+          <p style={{ color: C.warn, fontSize: 13, marginTop: 12, marginBottom: 0 }}>{fallbackNotice}</p>
+        )}
+
         {setupError && (
-          <p style={{ color: C.danger, fontSize: 13, marginTop: 12, marginBottom: 0 }}>⚠️ {setupError}</p>
+          <p style={{ color: C.danger, fontSize: 13, marginTop: 12, marginBottom: 0 }}>
+            ⚠️ {setupError}
+            {setupError.toLowerCase().includes("memory") && modelKey !== "gemma-2-2b" && (
+              <> Try selecting <strong>{MODELS["gemma-2-2b"].label}</strong> above and starting again.</>
+            )}
+          </p>
         )}
       </div>
 
