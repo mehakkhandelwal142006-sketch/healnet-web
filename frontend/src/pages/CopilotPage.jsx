@@ -44,6 +44,7 @@ export default function CopilotPage({ patients = [] }) {
   const [docs, setDocs]           = useState([]);      // embedded documents
   const [docCounts, setDocCounts] = useState("");
   const [setupError, setSetupError] = useState("");
+  const [driverIssue, setDriverIssue] = useState(false);
   const [fallbackNotice, setFallbackNotice] = useState("");
 
   // Chat state
@@ -69,7 +70,7 @@ export default function CopilotPage({ patients = [] }) {
   const initialize = useCallback(async () => {
     if (!patientId || initializingRef.current) return;
     initializingRef.current = true;
-    setSetupError(""); setFallbackNotice(""); setMessages([]); setDocs([]); setStage("loading-model");
+    setSetupError(""); setDriverIssue(false); setFallbackNotice(""); setMessages([]); setDocs([]); setStage("loading-model");
 
     // Step 1: warm up the LLM (downloads/loads the model, cached after first time).
     // If the GPU device is lost while loading the selected model (usually
@@ -89,6 +90,7 @@ export default function CopilotPage({ patients = [] }) {
     } catch (e) {
       console.error("[Copilot] LLM warm-up failed:", e);
       setSetupError(`[Local LLM] ${e.message || "Failed to load the language model."}`);
+      setDriverIssue(!!e.bothModelsFailed);
       setStage("error");
       initializingRef.current = false;
       return;
@@ -265,7 +267,10 @@ export default function CopilotPage({ patients = [] }) {
         {setupError && (
           <p style={{ color: C.danger, fontSize: 13, marginTop: 12, marginBottom: 0 }}>
             ⚠️ {setupError}
-            {setupError.toLowerCase().includes("memory") && modelKey !== "gemma-2-2b" && (
+            {driverIssue && (
+              <> This isn't fixed by picking a smaller model — try updating your graphics driver, check <code>chrome://gpu</code> for warnings, or test on a different device.</>
+            )}
+            {!driverIssue && setupError.toLowerCase().includes("memory") && modelKey !== "gemma-2-2b" && (
               <> Try selecting <strong>{MODELS["gemma-2-2b"].label}</strong> above and starting again.</>
             )}
           </p>
