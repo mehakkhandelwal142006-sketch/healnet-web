@@ -49,6 +49,37 @@ export function isWebGPUAvailable() {
 }
 
 /**
+ * Best-effort read of how constrained this device likely is, so we can
+ * warn (or steer users to desktop) *before* attempting to load a
+ * multi-GB model — rather than letting Android's low-memory killer
+ * silently crash the whole tab ("Aw, Snap!") mid-load, which happens
+ * too fast for any JS error handler to catch.
+ *
+ * navigator.deviceMemory (Chrome/Android only, rounded to
+ * 0.25/0.5/1/2/4/8...) is our best signal but isn't available on
+ * iOS/Safari/Firefox, so we combine it with a simple mobile UA check.
+ * This is a heuristic, not a guarantee — always pair it with a way
+ * for the user to proceed anyway.
+ */
+export function getDeviceProfile() {
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  const deviceMemoryGB = typeof navigator !== "undefined" ? navigator.deviceMemory : undefined;
+
+  // On mobile, treat missing deviceMemory (common on iOS) or <=4GB as
+  // likely insufficient for a 1.6-2.5GB model plus the embedding model
+  // plus the app itself, all inside one Chrome tab's memory budget.
+  // On desktop, only flag when deviceMemory is reported AND clearly low
+  // (a lot of desktop Chrome installs simply don't expose this API, so
+  // "undefined" shouldn't block desktop the way it does mobile).
+  const likelyInsufficientMemory = isMobile
+    ? (deviceMemoryGB === undefined || deviceMemoryGB <= 4)
+    : (deviceMemoryGB !== undefined && deviceMemoryGB <= 2);
+
+  return { isMobile, deviceMemoryGB, likelyInsufficientMemory };
+}
+
+/**
  * True if this error looks like a WebGPU "device lost" / disposed-object
  * error, as opposed to some other failure (network, parsing, etc).
  * These happen when the GPU runs out of memory or the OS/browser
@@ -200,6 +231,12 @@ export async function streamChat({ modelKey, messages, onToken, onProgress, temp
  * @returns {Promise<{usedModelKey: string, fellBack: boolean}>}
  */
 export async function warmUpWithFallback(modelKey, onProgress) {
+  // Free any previously loaded engine's memory before starting a new
+  // load — on memory-constrained devices, holding two engines' worth
+  // of weights in memory at once is often what tips it over into a
+  // crash rather than a catchable "device lost" error.
+  await unloadEngine();
+
   try {
     await streamChat({
       modelKey,
