@@ -24,6 +24,28 @@ function fmtDate(iso) {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
 
+/**
+ * Normalize an API response payload into a plain array, regardless of
+ * which shape that particular endpoint happens to wrap its list in.
+ * Different HealNet endpoints (or different versions of the same
+ * endpoint) have returned: a bare array, `{ items: [...] }`,
+ * `{ results: [...] }`, `{ data: [...] }`, or a single record object
+ * instead of a list. Without this, `.forEach`/`.map` on the raw value
+ * throws "is not a function" the moment one endpoint's shape doesn't
+ * match what the code assumed (this is what was crashing indexing).
+ */
+function toArray(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value.items)) return value.items;
+  if (Array.isArray(value.results)) return value.results;
+  if (Array.isArray(value.data)) return value.data;
+  if (Array.isArray(value.records)) return value.records;
+  // A single record object (not a list) — treat it as a one-item list
+  // rather than silently dropping it.
+  return [value];
+}
+
 function vitalToText(v) {
   const parts = [];
   if (v.heart_rate)       parts.push(`heart rate ${v.heart_rate} bpm`);
@@ -69,35 +91,43 @@ export async function buildPatientDocuments(patientId) {
     healthScoreAPI.getHistory(patientId, 60),
   ]);
 
-  const vitals = vRes.status === "fulfilled" ? vRes.value.data : getCachedVitals(patientId);
-  (vitals || []).forEach((v) => {
+  const vitals = vRes.status === "fulfilled"
+    ? toArray(vRes.value?.data)
+    : toArray(getCachedVitals(patientId));
+  vitals.forEach((v) => {
     const text = vitalToText(v);
     if (text) docs.push({ text, meta: { type: "vital", recorded_at: v.recorded_at } });
   });
 
   if (aRes.status === "fulfilled") {
-    (aRes.value.data || []).forEach((a) =>
+    toArray(aRes.value?.data).forEach((a) =>
       docs.push({ text: alertToText(a), meta: { type: "alert" } })
     );
   }
 
   if (sRes.status === "fulfilled") {
-    (sRes.value.data || []).forEach((s) =>
+    toArray(sRes.value?.data).forEach((s) =>
       docs.push({ text: symptomToText(s), meta: { type: "symptom" } })
     );
   }
 
   if (mRes.status === "fulfilled") {
-    (mRes.value.data || []).forEach((m) =>
+    toArray(mRes.value?.data).forEach((m) =>
       docs.push({ text: medicationToText(m), meta: { type: "medication" } })
     );
   }
 
   if (hRes.status === "fulfilled") {
-    (hRes.value.data || []).forEach((h) =>
+    toArray(hRes.value?.data).forEach((h) =>
       docs.push({ text: scoreToText(h), meta: { type: "health_score" } })
     );
   }
+
+  // Surface which calls actually failed outright (network/4xx/5xx), so
+  // it's distinguishable in logs from "this patient just has no data yet".
+  [["vitals", vRes], ["alerts", aRes], ["symptoms", sRes], ["medications", mRes], ["health score", hRes]]
+    .filter(([, r]) => r.status === "rejected")
+    .forEach(([label, r]) => console.warn(`[Copilot] Failed to fetch ${label}:`, r.reason));
 
   return docs;
 }
