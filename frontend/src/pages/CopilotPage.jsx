@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { isWebGPUAvailable, warmUpWithFallback, unloadEngine, MODELS } from "../copilot/llmEngine";
+import { isWebGPUAvailable, warmUpWithFallback, streamChat, unloadEngine, MODELS, getDeviceProfile } from "../copilot/llmEngine";
 import { embedDocuments, embedQuery, topK } from "../copilot/vectorStore";
 import { buildPatientDocuments, summarizeDocumentCounts } from "../copilot/healthContextBuilder";
-import { streamChat } from "../copilot/llmEngine";
 import { useNetwork } from "../offline/useNetwork";
 
 const C = {
@@ -34,7 +33,9 @@ export default function CopilotPage({ patients = [] }) {
   const { isOnline } = useNetwork();
 
   const [patientId, setPatientId] = useState(patients[0]?.patient_id || "");
-  const [modelKey, setModelKey]   = useState("phi-3.5");
+  const deviceProfile = useState(() => getDeviceProfile())[0];
+  const [modelKey, setModelKey]   = useState(deviceProfile.isMobile ? "gemma-2-2b" : "phi-3.5");
+  const [proceedAnyway, setProceedAnyway] = useState(false);
 
   // Setup / indexing state
   const [stage, setStage]         = useState("idle"); // idle | loading-model | indexing | ready | error
@@ -177,6 +178,31 @@ export default function CopilotPage({ patients = [] }) {
           This browser doesn't support WebGPU, which the local AI model needs to run.
           Try the latest version of <strong style={{ color: C.text }}>Chrome</strong> or <strong style={{ color: C.text }}>Edge</strong> on desktop or Android.
         </p>
+      </div>
+    );
+  }
+
+  // ── Likely-insufficient-memory device (e.g. phone) ───────────
+  if (deviceProfile.likelyInsufficientMemory && !proceedAnyway) {
+    return (
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 32, textAlign: "center" }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>📱</div>
+        <h3 style={{ color: C.warn, margin: "0 0 10px" }}>This device may not have enough memory</h3>
+        <p style={{ color: C.muted, maxWidth: 480, margin: "0 auto", lineHeight: 1.6 }}>
+          The on-device AI model is 1.5–2.5GB and needs to fit in your browser tab's memory alongside
+          the app itself. On phones this often crashes the tab entirely rather than showing an error.
+          For the best experience, use the Copilot on a <strong style={{ color: C.text }}>laptop or desktop</strong>.
+        </p>
+        <button
+          onClick={() => setProceedAnyway(true)}
+          style={{
+            marginTop: 18, padding: "10px 18px", borderRadius: 8,
+            border: `1px solid ${C.border}`, background: "transparent",
+            color: C.muted, fontSize: 13, cursor: "pointer",
+          }}
+        >
+          Try anyway (may crash the tab)
+        </button>
       </div>
     );
   }
