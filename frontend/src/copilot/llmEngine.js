@@ -251,15 +251,31 @@ export async function warmUpWithFallback(modelKey, onProgress) {
 
     onProgress?.({ progress: 0, text: `Switching to a lighter model (${MODELS[FALLBACK_MODEL_KEY].label})...` });
 
-    // Fresh attempt with the lighter model. If this also fails, let the
-    // error propagate as-is — we only auto-fallback once.
-    await streamChat({
-      modelKey: FALLBACK_MODEL_KEY,
-      messages: [{ role: "user", content: "hi" }],
-      onToken: () => {},
-      onProgress,
-    });
-    return { usedModelKey: FALLBACK_MODEL_KEY, fellBack: true };
+    // Fresh attempt with the lighter model. If this ALSO fails with a
+    // device-lost error, model size isn't the cause — the GPU driver
+    // itself is likely hanging/crashing (e.g. Windows TDR timeout),
+    // which no amount of switching models will fix. Tag the error so
+    // the UI can stop suggesting "try a lighter model" and point at
+    // the driver/hardware instead.
+    try {
+      await streamChat({
+        modelKey: FALLBACK_MODEL_KEY,
+        messages: [{ role: "user", content: "hi" }],
+        onToken: () => {},
+        onProgress,
+      });
+      return { usedModelKey: FALLBACK_MODEL_KEY, fellBack: true };
+    } catch (e2) {
+      if (isDeviceLostError(e2)) {
+        const bothFailed = new Error(
+          "Both the standard and lightest available models failed to load the same way. This points to a GPU driver issue on this device (not a model-size problem) — check chrome://gpu for driver warnings, update your graphics driver, or try a different device/browser."
+        );
+        bothFailed.bothModelsFailed = true;
+        bothFailed.original = e2;
+        throw bothFailed;
+      }
+      throw e2;
+    }
   }
 }
 
