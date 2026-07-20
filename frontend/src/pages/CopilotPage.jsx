@@ -73,8 +73,9 @@ export default function CopilotPage({ patients = [] }) {
     setSetupError(""); setDriverIssue(false); setFallbackNotice(""); setMessages([]); setDocs([]); setStage("loading-model");
 
     // Step 1: warm up the LLM (downloads/loads the model, cached after first time).
-    // If the GPU device is lost while loading the selected model (usually
-    // insufficient VRAM), automatically retry once with a lighter model.
+    // If the GPU device is lost while loading (usually insufficient VRAM
+    // or a driver timeout), automatically cascade down through
+    // progressively lighter models until one loads or all are exhausted.
     try {
       const { usedModelKey, fellBack } = await warmUpWithFallback(modelKey, (r) => {
         setLoadPct(Math.round((r.progress || 0) * 100));
@@ -84,13 +85,13 @@ export default function CopilotPage({ patients = [] }) {
       if (fellBack) {
         setModelKey(usedModelKey);
         setFallbackNotice(
-          `⚠️ Your GPU didn't have enough memory for the selected model, so we automatically switched to ${MODELS[usedModelKey].label}.`
+          `⚠️ Your GPU couldn't run the selected model, so we automatically switched to ${MODELS[usedModelKey].label}.`
         );
       }
     } catch (e) {
       console.error("[Copilot] LLM warm-up failed:", e);
       setSetupError(`[Local LLM] ${e.message || "Failed to load the language model."}`);
-      setDriverIssue(!!e.bothModelsFailed);
+      setDriverIssue(!!e.allModelsFailed);
       setStage("error");
       initializingRef.current = false;
       return;
@@ -191,7 +192,7 @@ export default function CopilotPage({ patients = [] }) {
         <div style={{ fontSize: 40, marginBottom: 12 }}>📱</div>
         <h3 style={{ color: C.warn, margin: "0 0 10px" }}>This device may not have enough memory</h3>
         <p style={{ color: C.muted, maxWidth: 480, margin: "0 auto", lineHeight: 1.6 }}>
-          The on-device AI model is 1.5–2.5GB and needs to fit in your browser tab's memory alongside
+          The on-device AI model is 0.6–2.5GB and needs to fit in your browser tab's memory alongside
           the app itself. On phones this often crashes the tab entirely rather than showing an error.
           For the best experience, use the Copilot on a <strong style={{ color: C.text }}>laptop or desktop</strong>.
         </p>
@@ -256,7 +257,7 @@ export default function CopilotPage({ patients = [] }) {
 
         {stage === "idle" && !setupError && (
           <p style={{ color: C.muted, fontSize: 13, marginTop: 12, marginBottom: 0, lineHeight: 1.6 }}>
-            The first load downloads a small language model (1.5–2.5GB) directly to your browser — this happens once and is cached for offline use afterward. No data ever leaves this device.
+            The first load downloads a small language model directly to your browser — this happens once and is cached for offline use afterward. No data ever leaves this device. If your GPU can't handle the selected model, we'll automatically try progressively lighter ones.
           </p>
         )}
 
@@ -268,10 +269,7 @@ export default function CopilotPage({ patients = [] }) {
           <p style={{ color: C.danger, fontSize: 13, marginTop: 12, marginBottom: 0 }}>
             ⚠️ {setupError}
             {driverIssue && (
-              <> This isn't fixed by picking a smaller model — try updating your graphics driver, check <code>chrome://gpu</code> for warnings, or test on a different device.</>
-            )}
-            {!driverIssue && setupError.toLowerCase().includes("memory") && modelKey !== "gemma-2-2b" && (
-              <> Try selecting <strong>{MODELS["gemma-2-2b"].label}</strong> above and starting again.</>
+              <> This isn't a model-size problem — we already tried every available tier down to the smallest (~0.6GB). Try updating your graphics driver, check <code>chrome://gpu</code> for warnings, or test on a different device.</>
             )}
           </p>
         )}
