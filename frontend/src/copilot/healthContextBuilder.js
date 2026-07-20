@@ -27,16 +27,19 @@ function fmtDate(iso) {
 /**
  * Normalize an API response payload into a plain array, regardless of
  * which shape that particular endpoint happens to wrap its list in.
- * Different HealNet endpoints (or different versions of the same
- * endpoint) have returned: a bare array, `{ items: [...] }`,
- * `{ results: [...] }`, `{ data: [...] }`, or a single record object
- * instead of a list. Without this, `.forEach`/`.map` on the raw value
- * throws "is not a function" the moment one endpoint's shape doesn't
- * match what the code assumed (this is what was crashing indexing).
+ * Confirmed against the actual backend routes:
+ *  - vitals / alerts / symptoms / medications → bare array
+ *  - GET /health-score/{id}/history           → { patient_id, days, history: [...] }
+ * Without the `.history` case, that one endpoint's object would fall
+ * through to the "single record" fallback and get wrapped as a
+ * meaningless one-item array — not a crash, but garbage output. The
+ * other wrapper keys (items/results/data/records) are kept as a
+ * defensive catch-all in case any endpoint's shape changes later.
  */
 function toArray(value) {
   if (Array.isArray(value)) return value;
   if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value.history)) return value.history;
   if (Array.isArray(value.items)) return value.items;
   if (Array.isArray(value.results)) return value.results;
   if (Array.isArray(value.data)) return value.data;
@@ -60,20 +63,21 @@ function vitalToText(v) {
   return `Vitals reading on ${fmtDate(v.recorded_at)} (source: ${v.source || "manual"}): ${parts.join(", ")}.`;
 }
 
+// Field names below are verified against backend/routes/*.py — not guessed.
 function alertToText(a) {
-  return `Alert on ${fmtDate(a.created_at || a.triggered_at)}: ${a.message || a.title || "unspecified alert"} (severity: ${a.severity || "unknown"}, acknowledged: ${a.acknowledged ? "yes" : "no"}).`;
+  return `Alert on ${fmtDate(a.recorded_at)}: ${a.message || "unspecified alert"} (category: ${a.category || "unknown"}, acknowledged: ${a.acknowledged ? "yes" : "no"}).`;
 }
 
 function symptomToText(s) {
-  return `Symptom logged on ${fmtDate(s.recorded_at || s.created_at)}: ${s.description || s.name || "unspecified symptom"}${s.severity ? `, severity ${s.severity}` : ""}.`;
+  return `Symptom logged on ${fmtDate(s.recorded_at)}: ${s.symptom || "unspecified symptom"}${s.severity ? `, severity ${s.severity}` : ""}${s.notes ? ` — ${s.notes}` : ""}.`;
 }
 
 function medicationToText(m) {
-  return `Medication on ${fmtDate(m.recorded_at || m.created_at)}: ${m.name || "unspecified medication"}${m.dosage ? `, dosage ${m.dosage}` : ""}${m.taken === false ? " (missed dose)" : ""}.`;
+  return `Medication on ${fmtDate(m.recorded_at)}: ${m.medication_name || "unspecified medication"}${m.dosage ? `, dosage ${m.dosage}` : ""}${m.notes ? ` — ${m.notes}` : ""}.`;
 }
 
 function scoreToText(h) {
-  return `Health score on ${fmtDate(h.date || h.recorded_at)}: ${h.score ?? h.health_score}/100.`;
+  return `Health score on ${fmtDate(h.date)}: ${h.total ?? "unknown"}/100 (grade ${h.grade || "?"}).`;
 }
 
 /**
