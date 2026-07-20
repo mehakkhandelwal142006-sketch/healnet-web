@@ -8,22 +8,30 @@
  * Documents (vitals, alerts, symptoms, meds, health-score entries)
  * are embedded once per session and kept in memory; queries are
  * matched against them with cosine similarity. No server, no API.
+ *
+ * IMPORTANT: @xenova/transformers is loaded via a DYNAMIC import()
+ * inside getExtractor(), not a static top-level import. A static
+ * import would force this multi-MB library to be parsed and executed
+ * the instant the Copilot page renders — even before the user clicks
+ * anything — which is enough to crash the tab outright on
+ * memory-constrained phones. Dynamic import defers fetching/parsing
+ * this code until it's actually needed.
  * ───────────────────────────────────────────────────────────────────
  */
-
-import { pipeline, env } from "@xenova/transformers";
-
-// Always fetch models from the HF CDN rather than expecting local files.
-env.allowLocalModels = false;
 
 const EMBED_MODEL = "Xenova/all-MiniLM-L6-v2";
 
 let extractorPromise = null;
 function getExtractor(onProgress) {
   if (!extractorPromise) {
-    extractorPromise = pipeline("feature-extraction", EMBED_MODEL, {
-      progress_callback: (p) => onProgress?.(p),
-    });
+    extractorPromise = (async () => {
+      const { pipeline, env } = await import("@xenova/transformers");
+      // Always fetch models from the HF CDN rather than expecting local files.
+      env.allowLocalModels = false;
+      return pipeline("feature-extraction", EMBED_MODEL, {
+        progress_callback: (p) => onProgress?.(p),
+      });
+    })();
   }
   return extractorPromise;
 }
