@@ -3,6 +3,7 @@ import { isWebGPUAvailable, warmUpWithFallback, streamChat, unloadEngine, MODELS
 import { embedDocuments, embedQuery, topK } from "../copilot/vectorStore";
 import { buildPatientDocuments, summarizeDocumentCounts } from "../copilot/healthContextBuilder";
 import { useNetwork } from "../offline/useNetwork";
+import AIPanel from "./AIPanel";
 
 const C = {
   bg: "#030c2c", card: "#04163c", border: "rgba(59,201,232,0.18)",
@@ -204,13 +205,17 @@ export default function CopilotPage({ patients = [] }) {
   // ── Unsupported browser ──────────────────────────────────────
   if (!gpuOk) {
     return (
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 32, textAlign: "center" }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>🧠</div>
-        <h3 style={{ color: C.accent, margin: "0 0 10px" }}>On-Device AI Copilot</h3>
-        <p style={{ color: C.muted, maxWidth: 480, margin: "0 auto", lineHeight: 1.6 }}>
-          This browser doesn't support WebGPU, which the local AI model needs to run.
-          Try the latest version of <strong style={{ color: C.text }}>Chrome</strong> or <strong style={{ color: C.text }}>Edge</strong> on desktop or Android.
-        </p>
+      <div>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 32, textAlign: "center", marginBottom: 20 }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🧠</div>
+          <h3 style={{ color: C.accent, margin: "0 0 10px" }}>On-Device AI Copilot</h3>
+          <p style={{ color: C.muted, maxWidth: 480, margin: "0 auto", lineHeight: 1.6 }}>
+            This browser doesn't support WebGPU, which the local AI model needs to run.
+            Try the latest version of <strong style={{ color: C.text }}>Chrome</strong> or <strong style={{ color: C.text }}>Edge</strong> on desktop or Android.
+          </p>
+        </div>
+        <p style={{ color: C.muted, fontSize: 13, marginBottom: 12 }}>In the meantime, here's your cloud-based AI analysis:</p>
+        {patientId && <AIPanel patientId={patientId} />}
       </div>
     );
   }
@@ -218,24 +223,28 @@ export default function CopilotPage({ patients = [] }) {
   // ── Likely-insufficient-memory device (e.g. phone) ───────────
   if (deviceProfile.likelyInsufficientMemory && !proceedAnyway) {
     return (
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 32, textAlign: "center" }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>📱</div>
-        <h3 style={{ color: C.warn, margin: "0 0 10px" }}>This device may not have enough memory</h3>
-        <p style={{ color: C.muted, maxWidth: 480, margin: "0 auto", lineHeight: 1.6 }}>
-          The on-device AI model is 0.6–2.5GB and needs to fit in your browser tab's memory alongside
-          the app itself. On phones this often crashes the tab entirely rather than showing an error.
-          For the best experience, use the Copilot on a <strong style={{ color: C.text }}>laptop or desktop</strong>.
-        </p>
-        <button
-          onClick={() => setProceedAnyway(true)}
-          style={{
-            marginTop: 18, padding: "10px 18px", borderRadius: 8,
-            border: `1px solid ${C.border}`, background: "transparent",
-            color: C.muted, fontSize: 13, cursor: "pointer",
-          }}
-        >
-          Try anyway (may crash the tab)
-        </button>
+      <div>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 32, textAlign: "center", marginBottom: 20 }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>📱</div>
+          <h3 style={{ color: C.warn, margin: "0 0 10px" }}>This device may not have enough memory</h3>
+          <p style={{ color: C.muted, maxWidth: 480, margin: "0 auto", lineHeight: 1.6 }}>
+            The on-device AI model is 0.6–2.5GB and needs to fit in your browser tab's memory alongside
+            the app itself. On phones this often crashes the tab entirely rather than showing an error.
+            For the best experience, use the Copilot on a <strong style={{ color: C.text }}>laptop or desktop</strong>.
+          </p>
+          <button
+            onClick={() => setProceedAnyway(true)}
+            style={{
+              marginTop: 18, padding: "10px 18px", borderRadius: 8,
+              border: `1px solid ${C.border}`, background: "transparent",
+              color: C.muted, fontSize: 13, cursor: "pointer",
+            }}
+          >
+            Try anyway (may crash the tab)
+          </button>
+        </div>
+        <p style={{ color: C.muted, fontSize: 13, marginBottom: 12 }}>In the meantime, here's your cloud-based AI analysis:</p>
+        {patientId && <AIPanel patientId={patientId} />}
       </div>
     );
   }
@@ -304,6 +313,15 @@ export default function CopilotPage({ patients = [] }) {
           </p>
         )}
       </div>
+
+      {driverIssue && patientId && (
+        <div style={{ marginBottom: 20 }}>
+          <p style={{ color: C.muted, fontSize: 13, marginBottom: 12 }}>
+            Local AI isn't working on this device right now — here's your cloud-based AI analysis instead:
+          </p>
+          <AIPanel patientId={patientId} />
+        </div>
+      )}
 
       {/* ── Quick actions ── */}
       {stage === "ready" && (
