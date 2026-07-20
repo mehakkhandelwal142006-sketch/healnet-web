@@ -11,7 +11,13 @@
  * ───────────────────────────────────────────────────────────────────
  */
 
-import { CreateMLCEngine } from "@mlc-ai/web-llm";
+// NOTE: @mlc-ai/web-llm is intentionally NOT statically imported at the
+// top of this file. A static import would force this multi-MB library
+// to be parsed and executed the instant this module loads — which
+// happens as soon as the Copilot page renders, even before any device
+// checks or button clicks. On memory-constrained phones that alone is
+// enough to crash the tab. getEngine() below loads it dynamically,
+// only when an engine is actually about to be created.
 
 // Small, fast, good-quality instruction models that run well on a
 // mid-range laptop/phone GPU. Phi-3.5 is the default: strong reasoning
@@ -164,6 +170,7 @@ export function getEngine(modelKey = "phi-3.5", onProgress) {
 
   const createPromise = (async () => {
     const { modelId, usesF16 } = await resolveModelVariant(modelKey);
+    const { CreateMLCEngine } = await import("@mlc-ai/web-llm");
     return CreateMLCEngine(modelId, {
       initProgressCallback: (report) => {
         const prefix = usesF16 ? "" : "[Compatibility mode] ";
