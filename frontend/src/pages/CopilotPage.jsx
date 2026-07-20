@@ -1,305 +1,373 @@
-/**
- * llmEngine.js
- * ───────────────────────────────────────────────────────────────────
- * On-device LLM engine using WebLLM (@mlc-ai/web-llm).
- * The model runs entirely inside the browser via WebGPU — nothing is
- * ever sent to a server, and no API key is required.
- *
- * The model file (~1-2 GB) is downloaded once from the WebLLM CDN and
- * cached by the browser (Cache Storage API), so subsequent loads are
- * near-instant and work fully offline.
- * ───────────────────────────────────────────────────────────────────
- */
+import { useState, useEffect, useRef, useCallback } from "react";
+import { isWebGPUAvailable, warmUpWithFallback, streamChat, unloadEngine, MODELS, FALLBACK_CHAIN, isDeviceLostError, getDeviceProfile } from "../copilot/llmEngine";
+import { embedDocuments, embedQuery, topK } from "../copilot/vectorStore";
+import { buildPatientDocuments, summarizeDocumentCounts } from "../copilot/healthContextBuilder";
+import { useNetwork } from "../offline/useNetwork";
 
-import { CreateMLCEngine } from "@mlc-ai/web-llm";
-
-// Small, fast, good-quality instruction models that run well on a
-// mid-range laptop/phone GPU. Phi-3.5 is the default: strong reasoning
-// for its size. Gemma-2-2B and SmolLM2-360M are progressively lighter
-// fallbacks for constrained hardware.
-//
-// Each model has an f16 variant (faster, smaller download) and an f32
-// variant (works on GPUs that don't support the WebGPU "shader-f16"
-// feature — many integrated/mobile GPUs don't). We detect support at
-// runtime and pick automatically so the user never has to know this
-// distinction, or hit a cryptic "Invalid ShaderModule" error.
-export const MODELS = {
-  "phi-3.5": {
-    f16: "Phi-3.5-mini-instruct-q4f16_1-MLC",
-    f32: "Phi-3.5-mini-instruct-q4f32_1-MLC",
-    label: "Phi-3.5 Mini (best quality, ~2.5GB)",
-  },
-  "gemma-2-2b": {
-    f16: "gemma-2-2b-it-q4f16_1-MLC",
-    f32: "gemma-2-2b-it-q4f32_1-MLC",
-    label: "Gemma 2 2B (lighter, ~1.6GB)",
-  },
-  "smollm2-360m": {
-    // ~376MB (f16) / ~580MB (f32) VRAM — for hardware too constrained
-    // for even Gemma 2 2B. Much less capable, but a real last resort
-    // rather than the Copilot simply not working at all.
-    f16: "SmolLM2-360M-Instruct-q4f16_1-MLC",
-    f32: "SmolLM2-360M-Instruct-q4f32_1-MLC",
-    label: "SmolLM2 360M (minimal, ~0.6GB)",
-  },
+const C = {
+  bg: "#030c2c", card: "#04163c", border: "rgba(59,201,232,0.18)",
+  accent: "#3BC9E8", accent2: "#00f5a0", danger: "#ff4d6d",
+  warn: "#ffd166", text: "#e8f4f8", muted: "rgba(232,244,248,0.5)",
 };
 
-// Ordered from most to least capable. warmUpWithFallback() walks down
-// this chain, starting from the requested model, trying each
-// progressively lighter tier until one loads successfully or all are
-// exhausted.
-export const FALLBACK_CHAIN = ["phi-3.5", "gemma-2-2b", "smollm2-360m"];
+const selectStyle = {
+  background: "#04163c", color: C.text, border: `1px solid ${C.border}`,
+  borderRadius: 8, padding: "10px 12px", fontSize: 14, outline: "none",
+};
 
-let enginePromise = null;
-let currentModelKey = null;
-let f16SupportPromise = null;
+const SYSTEM_PROMPT = `You are HealNet Copilot, an on-device health information assistant.
+You are given retrieved excerpts from a patient's own recorded health data (vitals, alerts, symptoms, medications, health scores).
+Rules:
+- Base your answer ONLY on the provided context. If the context doesn't contain the answer, say so clearly.
+- You are not a doctor. Never diagnose conditions or prescribe treatment. Frame observations as things to discuss with a clinician.
+- Be concise, clear, and specific — cite actual numbers/dates from the context when relevant.
+- If asked something unrelated to the patient's health data, politely redirect.`;
 
-/** True if this browser can run WebLLM at all. */
-export function isWebGPUAvailable() {
-  return typeof navigator !== "undefined" && !!navigator.gpu;
-}
+const QUICK_ACTIONS = [
+  { id: "trends",  icon: "📈", label: "Explain Trends",     prompt: "Explain the recent trends in my vitals and health data. What's improving, what's worsening, and what should I keep an eye on?" },
+  { id: "summary", icon: "📋", label: "Summarize Report",   prompt: "Give me a concise summary of my overall health data — key vitals, any alerts, symptoms, and medications." },
+  { id: "recs",    icon: "💡", label: "Get Recommendations",prompt: "Based on my health data, what general lifestyle or monitoring recommendations would be reasonable? Remind me these aren't medical advice." },
+];
 
-/**
- * Best-effort read of how constrained this device likely is, so we can
- * warn (or steer users to desktop) *before* attempting to load a
- * multi-GB model — rather than letting Android's low-memory killer
- * silently crash the whole tab ("Aw, Snap!") mid-load, which happens
- * too fast for any JS error handler to catch.
- *
- * navigator.deviceMemory (Chrome/Android only, rounded to
- * 0.25/0.5/1/2/4/8...) is our best signal but isn't available on
- * iOS/Safari/Firefox, so we combine it with a simple mobile UA check.
- * This is a heuristic, not a guarantee — always pair it with a way
- * for the user to proceed anyway.
- */
-export function getDeviceProfile() {
-  const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
-  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
-  const deviceMemoryGB = typeof navigator !== "undefined" ? navigator.deviceMemory : undefined;
+export default function CopilotPage({ patients = [] }) {
+  const { isOnline } = useNetwork();
 
-  // On mobile, treat missing deviceMemory (common on iOS) or <=4GB as
-  // likely insufficient for a 1.6-2.5GB model plus the embedding model
-  // plus the app itself, all inside one Chrome tab's memory budget.
-  // On desktop, only flag when deviceMemory is reported AND clearly low
-  // (a lot of desktop Chrome installs simply don't expose this API, so
-  // "undefined" shouldn't block desktop the way it does mobile).
-  const likelyInsufficientMemory = isMobile
-    ? (deviceMemoryGB === undefined || deviceMemoryGB <= 4)
-    : (deviceMemoryGB !== undefined && deviceMemoryGB <= 2);
+  const [patientId, setPatientId] = useState(patients[0]?.patient_id || "");
+  const deviceProfile = useState(() => getDeviceProfile())[0];
+  const [modelKey, setModelKey]   = useState(deviceProfile.isMobile ? "gemma-2-2b" : "phi-3.5");
+  const [proceedAnyway, setProceedAnyway] = useState(false);
 
-  return { isMobile, deviceMemoryGB, likelyInsufficientMemory };
-}
+  // Setup / indexing state
+  const [stage, setStage]         = useState("idle"); // idle | loading-model | indexing | ready | error
+  const [loadPct, setLoadPct]     = useState(0);
+  const [loadText, setLoadText]   = useState("");
+  const [docs, setDocs]           = useState([]);      // embedded documents
+  const [docCounts, setDocCounts] = useState("");
+  const [setupError, setSetupError] = useState("");
+  const [driverIssue, setDriverIssue] = useState(false);
+  const [fallbackNotice, setFallbackNotice] = useState("");
 
-/**
- * True if this error looks like a WebGPU "device lost" / disposed-object
- * error, as opposed to some other failure (network, parsing, etc).
- * These happen when the GPU runs out of memory, the OS/browser reclaims
- * the device mid-load, or the driver itself times out the GPU (Windows
- * TDR — "device hung"). They leave the previous engine instance
- * permanently unusable (any further call throws "Object has already
- * been disposed").
- */
-export function isDeviceLostError(e) {
-  const msg = String(e?.message || e || "").toLowerCase();
-  return (
-    msg.includes("device was lost") ||
-    msg.includes("device has been lost") ||
-    msg.includes("already been disposed") ||
-    msg.includes("gpudevicelostinfo") ||
-    msg.includes("out of memory") ||
-    msg.includes("device_hung") ||
-    msg.includes("device hung")
-  );
-}
+  // Chat state
+  const [messages, setMessages]   = useState([]); // {role, content}
+  const [input, setInput]         = useState("");
+  const [streaming, setStreaming] = useState(false);
+  const chatEndRef = useRef(null);
+  const initializingRef = useRef(false);
 
-/**
- * True if the GPU/browser supports the WebGPU "shader-f16" feature.
- * Cached after first check. Falls back to false (safer, f32) on any error.
- */
-export async function supportsShaderF16() {
-  if (f16SupportPromise) return f16SupportPromise;
-  f16SupportPromise = (async () => {
+  const gpuOk = isWebGPUAvailable();
+
+  useEffect(() => {
+    if (patients.length && !patientId) setPatientId(patients[0].patient_id);
+  }, [patients, patientId]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, streaming]);
+
+  useEffect(() => () => { unloadEngine(); }, []); // unload model when leaving page
+
+
+  const initialize = useCallback(async () => {
+    if (!patientId || initializingRef.current) return;
+    initializingRef.current = true;
+    setSetupError(""); setDriverIssue(false); setFallbackNotice(""); setMessages([]); setDocs([]); setStage("loading-model");
+
+    // Step 1: warm up the LLM (downloads/loads the model, cached after first time).
+    // If the GPU device is lost while loading (usually insufficient VRAM
+    // or a driver timeout), automatically cascade down through
+    // progressively lighter models until one loads or all are exhausted.
     try {
-      if (!navigator.gpu) return false;
-      const adapter = await navigator.gpu.requestAdapter();
-      return !!adapter?.features?.has("shader-f16");
-    } catch {
-      return false;
+      const { usedModelKey, fellBack } = await warmUpWithFallback(modelKey, (r) => {
+        setLoadPct(Math.round((r.progress || 0) * 100));
+        setLoadText(r.text || "Loading model...");
+      });
+
+      if (fellBack) {
+        setModelKey(usedModelKey);
+        setFallbackNotice(
+          `⚠️ Your GPU couldn't run the selected model, so we automatically switched to ${MODELS[usedModelKey].label}.`
+        );
+      }
+    } catch (e) {
+      console.error("[Copilot] LLM warm-up failed:", e);
+      setSetupError(`[Local LLM] ${e.message || "Failed to load the language model."}`);
+      setDriverIssue(!!e.allModelsFailed);
+      setStage("error");
+      initializingRef.current = false;
+      return;
     }
-  })();
-  return f16SupportPromise;
-}
 
-/** Resolve which actual model id will be used for a given model key, and whether it's the fast (f16) or compatibility (f32) variant. */
-export async function resolveModelVariant(modelKey = "phi-3.5") {
-  const entry = MODELS[modelKey] ?? MODELS["phi-3.5"];
-  const hasF16 = await supportsShaderF16();
-  return { modelId: hasF16 ? entry.f16 : entry.f32, usesF16: hasF16 };
-}
+    // Step 2: build + embed the patient's health documents
+    setStage("indexing"); setLoadText("Fetching and indexing your health data...");
+    try {
+      const rawDocs = await buildPatientDocuments(patientId);
+      if (!rawDocs.length) {
+        setSetupError("No health data found yet for this patient — add some vitals first so the Copilot has something to work with.");
+        setStage("idle");
+        initializingRef.current = false;
+        return;
+      }
+      const indexed = await embedDocuments(rawDocs, (p) => {
+        if (p?.status === "progress") setLoadText(`Loading embedding model... ${Math.round(p.progress || 0)}%`);
+      });
+      setDocs(indexed);
+      setDocCounts(summarizeDocumentCounts(rawDocs));
+      setStage("ready");
+      setMessages([{
+        role: "assistant",
+        content: `I've loaded and indexed your health data locally (${summarizeDocumentCounts(rawDocs)}). Everything from here runs entirely on this device — ask me anything, or use a quick action below.`,
+      }]);
+    } catch (e) {
+      console.error("[Copilot] Embedding/indexing failed:", e);
+      setSetupError(`[Embedding model] ${e.message || "Failed to index your health data."}`);
+      setStage("error");
+    } finally {
+      initializingRef.current = false;
+    }
+  }, [patientId, modelKey]);
+  async function ask(promptText) {
+    if (!promptText.trim() || streaming || stage !== "ready") return;
+    const userMsg = { role: "user", content: promptText };
+    setMessages((m) => [...m, userMsg]);
+    setInput("");
+    setStreaming(true);
 
-/**
- * Load (or reuse) the engine for a given model.
- * IMPORTANT: this is intentionally a plain (non-async) function that
- * caches `enginePromise` synchronously before doing any awaiting. If
- * this were `async` and awaited before caching, two near-simultaneous
- * calls (e.g. a fast double-click) could both slip past the "already
- * loading" check and each try to create a competing engine — which is
- * exactly what causes GPU-level "Object has already been disposed"
- * errors, since two engines fight over the same WebGPU device.
- * @param {string} modelKey - key into MODELS, e.g. "phi-3.5"
- * @param {(report: {progress:number, text:string}) => void} onProgress
- */
-export function getEngine(modelKey = "phi-3.5", onProgress) {
-  if (enginePromise && currentModelKey === modelKey) return enginePromise;
+    // Retrieve relevant context locally (once — reused across any retry below)
+    let context = "";
+    try {
+      const qVec = await embedQuery(promptText);
+      const hits = topK(qVec, docs, 8);
+      context = hits.map((h) => `- ${h.text}`).join("\n");
+    } catch (e) {
+      setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${e.message || "Failed to search your health data."}` }]);
+      setStreaming(false);
+      return;
+    }
 
-  if (!isWebGPUAvailable()) {
-    return Promise.reject(
-      new Error(
-        "This browser doesn't support WebGPU, which is required for on-device AI. Try the latest Chrome or Edge."
-      )
+    const chatMessages = [
+      { role: "system", content: `${SYSTEM_PROMPT}\n\nRetrieved patient data:\n${context}` },
+      ...messages.filter((m) => m.role !== "system").slice(-6),
+      userMsg,
+    ];
+
+    // Try the current model; if the GPU dies mid-answer (this happens on
+    // longer, heavier generations even when the initial warm-up
+    // succeeded), automatically drop to the next lighter tier in
+    // FALLBACK_CHAIN and retry the SAME question once, rather than just
+    // failing the message outright.
+    const attemptOrder = [modelKey, ...FALLBACK_CHAIN.slice(FALLBACK_CHAIN.indexOf(modelKey) + 1)];
+
+    for (let i = 0; i < attemptOrder.length; i++) {
+      const tryModelKey = attemptOrder[i];
+      let placeholderAdded = false;
+      try {
+        if (i > 0) {
+          setMessages((m) => [...m, { role: "assistant", content: `⚠️ Ran out of GPU capacity — retrying with ${MODELS[tryModelKey].label}...` }]);
+          await unloadEngine();
+        }
+
+        const full = await streamChat({
+          modelKey: tryModelKey,
+          messages: chatMessages,
+          onToken: (_delta, fullSoFar) => {
+            setMessages((m) => {
+              const copy = [...m];
+              if (!placeholderAdded) {
+                copy.push({ role: "assistant", content: fullSoFar });
+                placeholderAdded = true;
+              } else {
+                copy[copy.length - 1] = { role: "assistant", content: fullSoFar };
+              }
+              return copy;
+            });
+          },
+        });
+
+        if (!full) {
+          setMessages((m) => [...m, { role: "assistant", content: "(no response generated)" }]);
+        }
+        if (i > 0) setModelKey(tryModelKey); // stick with the lighter model that actually worked
+        break;
+      } catch (e) {
+        const isLast = i === attemptOrder.length - 1;
+        if (isDeviceLostError(e) && !isLast) {
+          continue; // fall through to the next lighter tier
+        }
+        setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${e.message || "Local inference failed."}` }]);
+        break;
+      }
+    }
+
+    setStreaming(false);
+  }
+
+  // ── Unsupported browser ──────────────────────────────────────
+  if (!gpuOk) {
+    return (
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 32, textAlign: "center" }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>🧠</div>
+        <h3 style={{ color: C.accent, margin: "0 0 10px" }}>On-Device AI Copilot</h3>
+        <p style={{ color: C.muted, maxWidth: 480, margin: "0 auto", lineHeight: 1.6 }}>
+          This browser doesn't support WebGPU, which the local AI model needs to run.
+          Try the latest version of <strong style={{ color: C.text }}>Chrome</strong> or <strong style={{ color: C.text }}>Edge</strong> on desktop or Android.
+        </p>
+      </div>
     );
   }
 
-  currentModelKey = modelKey;
-
-  const createPromise = (async () => {
-    const { modelId, usesF16 } = await resolveModelVariant(modelKey);
-    return CreateMLCEngine(modelId, {
-      initProgressCallback: (report) => {
-        const prefix = usesF16 ? "" : "[Compatibility mode] ";
-        onProgress?.({ progress: report.progress ?? 0, text: prefix + (report.text ?? "") });
-      },
-    });
-  })();
-
-  // Cache immediately (synchronously, in this same tick) so any other
-  // call to getEngine() made before this resolves sees it right away.
-  enginePromise = createPromise;
-
-  createPromise.catch(() => {
-    if (enginePromise === createPromise) {
-      enginePromise = null;
-      currentModelKey = null;
-    }
-  });
-
-  return enginePromise;
-}
-
-/** Force-clear the cached engine (e.g. after a runtime error like "Object has already been disposed"), without trying to call .unload() on a possibly-broken instance. */
-export function resetEngine() {
-  enginePromise = null;
-  currentModelKey = null;
-}
-
-/**
- * Stream a chat completion. Calls onToken for every partial chunk and
- * resolves with the full text at the end.
- */
-export async function streamChat({ modelKey, messages, onToken, onProgress, temperature = 0.4 }) {
-  const engine = await getEngine(modelKey, onProgress);
-
-  try {
-    const chunks = await engine.chat.completions.create({
-      messages,
-      temperature,
-      stream: true,
-    });
-
-    let full = "";
-    for await (const chunk of chunks) {
-      const delta = chunk.choices?.[0]?.delta?.content || "";
-      if (delta) {
-        full += delta;
-        onToken?.(delta, full);
-      }
-    }
-    return full;
-  } catch (e) {
-    // Runtime errors (e.g. "Object has already been disposed") mean the
-    // cached engine instance is broken — clear it so the next attempt
-    // creates a fresh one instead of repeatedly hitting the same error.
-    resetEngine();
-
-    if (isDeviceLostError(e)) {
-      const friendly = new Error(
-        "The GPU ran out of memory, the driver timed out, or the browser reclaimed it while running the model. Try a lighter model, close other GPU-heavy tabs, or restart the browser."
-      );
-      friendly.isDeviceLost = true;
-      friendly.original = e;
-      throw friendly;
-    }
-    throw e;
-  }
-}
-
-/**
- * Warm up a model, cascading through progressively lighter tiers of
- * FALLBACK_CHAIN if the GPU device is lost (out-of-memory, driver
- * timeout, etc). Starts at `modelKey`'s position in the chain (so
- * picking a lighter model manually doesn't re-try heavier ones) and
- * walks downward until one loads successfully or every remaining tier
- * has been exhausted.
- *
- * @param {string} modelKey
- * @param {(report:{progress:number, text:string}) => void} onProgress
- * @returns {Promise<{usedModelKey: string, fellBack: boolean}>}
- */
-export async function warmUpWithFallback(modelKey, onProgress) {
-  const startIndex = Math.max(0, FALLBACK_CHAIN.indexOf(modelKey));
-  const tiersToTry = FALLBACK_CHAIN.slice(startIndex);
-
-  let lastError = null;
-
-  for (let i = 0; i < tiersToTry.length; i++) {
-    const tierKey = tiersToTry[i];
-    const isFirstAttempt = i === 0;
-
-    // Free any previously loaded engine's memory before each attempt —
-    // on memory-constrained devices, holding two engines' worth of
-    // weights in memory at once is often what tips it over into a
-    // crash rather than a catchable "device lost" error.
-    await unloadEngine();
-
-    if (!isFirstAttempt) {
-      onProgress?.({ progress: 0, text: `Switching to a lighter model (${MODELS[tierKey].label})...` });
-    }
-
-    try {
-      await streamChat({
-        modelKey: tierKey,
-        messages: [{ role: "user", content: "hi" }],
-        onToken: () => {},
-        onProgress,
-      });
-      return { usedModelKey: tierKey, fellBack: !isFirstAttempt };
-    } catch (e) {
-      lastError = e;
-      if (!isDeviceLostError(e)) throw e; // non-hardware error — don't cascade, surface immediately
-      // otherwise: fall through and try the next lighter tier
-    }
+  // ── Likely-insufficient-memory device (e.g. phone) ───────────
+  if (deviceProfile.likelyInsufficientMemory && !proceedAnyway) {
+    return (
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 32, textAlign: "center" }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>📱</div>
+        <h3 style={{ color: C.warn, margin: "0 0 10px" }}>This device may not have enough memory</h3>
+        <p style={{ color: C.muted, maxWidth: 480, margin: "0 auto", lineHeight: 1.6 }}>
+          The on-device AI model is 0.6–2.5GB and needs to fit in your browser tab's memory alongside
+          the app itself. On phones this often crashes the tab entirely rather than showing an error.
+          For the best experience, use the Copilot on a <strong style={{ color: C.text }}>laptop or desktop</strong>.
+        </p>
+        <button
+          onClick={() => setProceedAnyway(true)}
+          style={{
+            marginTop: 18, padding: "10px 18px", borderRadius: 8,
+            border: `1px solid ${C.border}`, background: "transparent",
+            color: C.muted, fontSize: 13, cursor: "pointer",
+          }}
+        >
+          Try anyway (may crash the tab)
+        </button>
+      </div>
+    );
   }
 
-  // Every tier in the chain failed with a device-lost-style error —
-  // this points at the GPU driver/hardware itself, not model size.
-  const allFailed = new Error(
-    "Every available model — from the largest down to the smallest (~0.6GB) — failed to load the same way. This points to a GPU driver issue on this device rather than a model-size problem: check chrome://gpu for driver warnings, update your graphics driver, or try a different device/browser."
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+        <h3 style={{ margin: 0, color: C.accent, fontSize: 18 }}>🧠 AI Health Copilot <span style={{ fontSize: 11, color: C.accent2, border: `1px solid ${C.accent2}44`, borderRadius: 6, padding: "2px 8px", marginLeft: 8 }}>ON-DEVICE · OFFLINE</span></h3>
+        {!isOnline && <span style={{ fontSize: 12, color: C.warn }}>⚠ Offline — using cached data if available</span>}
+      </div>
+
+      {/* ── Setup controls ── */}
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={patientId} onChange={(e) => setPatientId(e.target.value)} style={selectStyle} disabled={stage === "loading-model" || stage === "indexing"}>
+            {patients.map((p) => (
+              <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>
+            ))}
+          </select>
+
+          <select value={modelKey} onChange={(e) => setModelKey(e.target.value)} style={selectStyle} disabled={stage === "loading-model" || stage === "indexing"}>
+            {Object.entries(MODELS).map(([key, m]) => (
+              <option key={key} value={key}>{m.label}</option>
+            ))}
+          </select>
+
+          <button
+            onClick={initialize}
+            disabled={!patientId || stage === "loading-model" || stage === "indexing"}
+            style={{
+              padding: "10px 18px", borderRadius: 8, border: "none",
+              background: C.accent, color: C.bg, fontWeight: 700, cursor: "pointer",
+              opacity: (!patientId || stage === "loading-model" || stage === "indexing") ? 0.6 : 1,
+            }}
+          >
+            {stage === "ready" ? "↻ Reload Copilot" : "▶ Start Local AI"}
+          </button>
+
+          {(stage === "loading-model" || stage === "indexing") && (
+            <span style={{ color: C.muted, fontSize: 13 }}>{loadText} {loadPct > 0 && stage === "loading-model" ? `(${loadPct}%)` : ""}</span>
+          )}
+        </div>
+
+        {(stage === "loading-model") && (
+          <div style={{ marginTop: 12, background: "rgba(255,255,255,0.06)", borderRadius: 6, height: 8, overflow: "hidden" }}>
+            <div style={{ width: `${loadPct}%`, height: 8, background: C.accent, transition: "width 0.3s" }} />
+          </div>
+        )}
+
+        {stage === "idle" && !setupError && (
+          <p style={{ color: C.muted, fontSize: 13, marginTop: 12, marginBottom: 0, lineHeight: 1.6 }}>
+            The first load downloads a small language model directly to your browser — this happens once and is cached for offline use afterward. No data ever leaves this device. If your GPU can't handle the selected model, we'll automatically try progressively lighter ones.
+          </p>
+        )}
+
+        {fallbackNotice && (
+          <p style={{ color: C.warn, fontSize: 13, marginTop: 12, marginBottom: 0 }}>{fallbackNotice}</p>
+        )}
+
+        {setupError && (
+          <p style={{ color: C.danger, fontSize: 13, marginTop: 12, marginBottom: 0 }}>
+            ⚠️ {setupError}
+            {driverIssue && (
+              <> This isn't a model-size problem — we already tried every available tier down to the smallest (~0.6GB). Try updating your graphics driver, check <code>chrome://gpu</code> for warnings, or test on a different device.</>
+            )}
+          </p>
+        )}
+      </div>
+
+      {/* ── Quick actions ── */}
+      {stage === "ready" && (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+          {QUICK_ACTIONS.map((qa) => (
+            <button key={qa.id} onClick={() => ask(qa.prompt)} disabled={streaming}
+              style={{
+                background: "rgba(59,201,232,0.08)", border: `1px solid ${C.border}`,
+                color: C.text, borderRadius: 10, padding: "10px 16px", fontSize: 13,
+                cursor: streaming ? "not-allowed" : "pointer", fontWeight: 600,
+                opacity: streaming ? 0.6 : 1,
+              }}>
+              {qa.icon} {qa.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── Chat ── */}
+      {(stage === "ready" || messages.length > 0) && (
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", height: 480 }}>
+          <div style={{ flex: 1, overflowY: "auto", marginBottom: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+            {messages.map((m, i) => (
+              <div key={i} style={{
+                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                maxWidth: "80%",
+                background: m.role === "user" ? C.accent + "22" : "rgba(255,255,255,0.05)",
+                border: `1px solid ${m.role === "user" ? C.accent + "44" : C.border}`,
+                borderRadius: 12, padding: "10px 14px", fontSize: 14, lineHeight: 1.6,
+                color: C.text, whiteSpace: "pre-wrap",
+              }}>
+                {m.content}
+              </div>
+            ))}
+            {streaming && messages[messages.length - 1]?.role === "user" && (
+              <div style={{ alignSelf: "flex-start", color: C.muted, fontSize: 13 }}>🧠 thinking locally...</div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(input); } }}
+              placeholder={stage === "ready" ? "Ask about your health data..." : "Start the local AI above first..."}
+              disabled={stage !== "ready" || streaming}
+              style={{ ...selectStyle, flex: 1 }}
+            />
+            <button onClick={() => ask(input)} disabled={stage !== "ready" || streaming || !input.trim()}
+              style={{
+                padding: "10px 18px", borderRadius: 8, border: "none",
+                background: C.accent2, color: C.bg, fontWeight: 700, cursor: "pointer",
+                opacity: (stage !== "ready" || streaming || !input.trim()) ? 0.5 : 1,
+              }}>
+              Send
+            </button>
+          </div>
+        </div>
+      )}
+
+      <p style={{ color: C.muted, fontSize: 11, marginTop: 14, lineHeight: 1.6 }}>
+        🔒 All inference and data retrieval for the Copilot happen locally in your browser via WebGPU/WASM. Nothing is sent to HealNet's servers or any third party. This is not a substitute for professional medical advice.
+      </p>
+    </div>
   );
-  allFailed.allModelsFailed = true;
-  allFailed.original = lastError;
-  throw allFailed;
-}
-
-/** Unload the model to free GPU/RAM (e.g. when leaving the Copilot page). */
-export async function unloadEngine() {
-  if (enginePromise) {
-    try {
-      const engine = await enginePromise;
-      await engine.unload();
-    } catch {
-      /* noop */
-    }
-  }
-  enginePromise = null;
-  currentModelKey = null;
 }
