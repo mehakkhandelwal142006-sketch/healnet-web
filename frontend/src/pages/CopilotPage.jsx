@@ -195,6 +195,10 @@ export default function CopilotPage({ patients = [] }) {
           continue; // fall through to the next lighter tier
         }
         setMessages((m) => [...m, { role: "assistant", content: `⚠️ ${e.message || "Local inference failed."}` }]);
+        // Every available tier failed with a hardware-level error — show
+        // the cloud-based AI analysis below as a working alternative,
+        // same as when startup itself fails for this reason.
+        if (isDeviceLostError(e)) setDriverIssue(true);
         break;
       }
     }
