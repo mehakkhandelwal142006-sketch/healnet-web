@@ -15,7 +15,8 @@ import { CreateMLCEngine } from "@mlc-ai/web-llm";
 
 // Small, fast, good-quality instruction models that run well on a
 // mid-range laptop/phone GPU. Phi-3.5 is the default: strong reasoning
-// for its size. Gemma-2-2B is a lighter fallback.
+// for its size. Gemma-2-2B and SmolLM2-360M are progressively lighter
+// fallbacks for constrained hardware.
 //
 // Each model has an f16 variant (faster, smaller download) and an f32
 // variant (works on GPUs that don't support the WebGPU "shader-f16"
@@ -33,11 +34,21 @@ export const MODELS = {
     f32: "gemma-2-2b-it-q4f32_1-MLC",
     label: "Gemma 2 2B (lighter, ~1.6GB)",
   },
+  "smollm2-360m": {
+    // ~376MB (f16) / ~580MB (f32) VRAM — for hardware too constrained
+    // for even Gemma 2 2B. Much less capable, but a real last resort
+    // rather than the Copilot simply not working at all.
+    f16: "SmolLM2-360M-Instruct-q4f16_1-MLC",
+    f32: "SmolLM2-360M-Instruct-q4f32_1-MLC",
+    label: "SmolLM2 360M (minimal, ~0.6GB)",
+  },
 };
 
-// Model key used as an automatic fallback when a heavier model's GPU
-// device is lost (usually due to insufficient VRAM).
-export const FALLBACK_MODEL_KEY = "gemma-2-2b";
+// Ordered from most to least capable. warmUpWithFallback() walks down
+// this chain, starting from the requested model, trying each
+// progressively lighter tier until one loads successfully or all are
+// exhausted.
+export const FALLBACK_CHAIN = ["phi-3.5", "gemma-2-2b", "smollm2-360m"];
 
 let enginePromise = null;
 let currentModelKey = null;
@@ -82,10 +93,11 @@ export function getDeviceProfile() {
 /**
  * True if this error looks like a WebGPU "device lost" / disposed-object
  * error, as opposed to some other failure (network, parsing, etc).
- * These happen when the GPU runs out of memory or the OS/browser
- * reclaims the device mid-load, and they leave the previous engine
- * instance permanently unusable (any further call throws "Object has
- * already been disposed").
+ * These happen when the GPU runs out of memory, the OS/browser reclaims
+ * the device mid-load, or the driver itself times out the GPU (Windows
+ * TDR — "device hung"). They leave the previous engine instance
+ * permanently unusable (any further call throws "Object has already
+ * been disposed").
  */
 export function isDeviceLostError(e) {
   const msg = String(e?.message || e || "").toLowerCase();
@@ -94,7 +106,9 @@ export function isDeviceLostError(e) {
     msg.includes("device has been lost") ||
     msg.includes("already been disposed") ||
     msg.includes("gpudevicelostinfo") ||
-    msg.includes("out of memory")
+    msg.includes("out of memory") ||
+    msg.includes("device_hung") ||
+    msg.includes("device hung")
   );
 }
 
@@ -209,7 +223,7 @@ export async function streamChat({ modelKey, messages, onToken, onProgress, temp
 
     if (isDeviceLostError(e)) {
       const friendly = new Error(
-        "The GPU ran out of memory or the browser reclaimed it while running the model. Try a lighter model, close other GPU-heavy tabs, or restart the browser."
+        "The GPU ran out of memory, the driver timed out, or the browser reclaimed it while running the model. Try a lighter model, close other GPU-heavy tabs, or restart the browser."
       );
       friendly.isDeviceLost = true;
       friendly.original = e;
@@ -220,63 +234,60 @@ export async function streamChat({ modelKey, messages, onToken, onProgress, temp
 }
 
 /**
- * Warm up a model, and if its GPU device is lost (commonly an
- * out-of-memory condition on the requested model), automatically
- * retry once with the lighter FALLBACK_MODEL_KEY. Returns the model
- * key that actually succeeded, so callers can update their UI/state
- * to reflect what's really loaded.
+ * Warm up a model, cascading through progressively lighter tiers of
+ * FALLBACK_CHAIN if the GPU device is lost (out-of-memory, driver
+ * timeout, etc). Starts at `modelKey`'s position in the chain (so
+ * picking a lighter model manually doesn't re-try heavier ones) and
+ * walks downward until one loads successfully or every remaining tier
+ * has been exhausted.
  *
  * @param {string} modelKey
  * @param {(report:{progress:number, text:string}) => void} onProgress
  * @returns {Promise<{usedModelKey: string, fellBack: boolean}>}
  */
 export async function warmUpWithFallback(modelKey, onProgress) {
-  // Free any previously loaded engine's memory before starting a new
-  // load — on memory-constrained devices, holding two engines' worth
-  // of weights in memory at once is often what tips it over into a
-  // crash rather than a catchable "device lost" error.
-  await unloadEngine();
+  const startIndex = Math.max(0, FALLBACK_CHAIN.indexOf(modelKey));
+  const tiersToTry = FALLBACK_CHAIN.slice(startIndex);
 
-  try {
-    await streamChat({
-      modelKey,
-      messages: [{ role: "user", content: "hi" }],
-      onToken: () => {},
-      onProgress,
-    });
-    return { usedModelKey: modelKey, fellBack: false };
-  } catch (e) {
-    const canFallBack = isDeviceLostError(e) && modelKey !== FALLBACK_MODEL_KEY;
-    if (!canFallBack) throw e;
+  let lastError = null;
 
-    onProgress?.({ progress: 0, text: `Switching to a lighter model (${MODELS[FALLBACK_MODEL_KEY].label})...` });
+  for (let i = 0; i < tiersToTry.length; i++) {
+    const tierKey = tiersToTry[i];
+    const isFirstAttempt = i === 0;
 
-    // Fresh attempt with the lighter model. If this ALSO fails with a
-    // device-lost error, model size isn't the cause — the GPU driver
-    // itself is likely hanging/crashing (e.g. Windows TDR timeout),
-    // which no amount of switching models will fix. Tag the error so
-    // the UI can stop suggesting "try a lighter model" and point at
-    // the driver/hardware instead.
+    // Free any previously loaded engine's memory before each attempt —
+    // on memory-constrained devices, holding two engines' worth of
+    // weights in memory at once is often what tips it over into a
+    // crash rather than a catchable "device lost" error.
+    await unloadEngine();
+
+    if (!isFirstAttempt) {
+      onProgress?.({ progress: 0, text: `Switching to a lighter model (${MODELS[tierKey].label})...` });
+    }
+
     try {
       await streamChat({
-        modelKey: FALLBACK_MODEL_KEY,
+        modelKey: tierKey,
         messages: [{ role: "user", content: "hi" }],
         onToken: () => {},
         onProgress,
       });
-      return { usedModelKey: FALLBACK_MODEL_KEY, fellBack: true };
-    } catch (e2) {
-      if (isDeviceLostError(e2)) {
-        const bothFailed = new Error(
-          "Both the standard and lightest available models failed to load the same way. This points to a GPU driver issue on this device (not a model-size problem) — check chrome://gpu for driver warnings, update your graphics driver, or try a different device/browser."
-        );
-        bothFailed.bothModelsFailed = true;
-        bothFailed.original = e2;
-        throw bothFailed;
-      }
-      throw e2;
+      return { usedModelKey: tierKey, fellBack: !isFirstAttempt };
+    } catch (e) {
+      lastError = e;
+      if (!isDeviceLostError(e)) throw e; // non-hardware error — don't cascade, surface immediately
+      // otherwise: fall through and try the next lighter tier
     }
   }
+
+  // Every tier in the chain failed with a device-lost-style error —
+  // this points at the GPU driver/hardware itself, not model size.
+  const allFailed = new Error(
+    "Every available model — from the largest down to the smallest (~0.6GB) — failed to load the same way. This points to a GPU driver issue on this device rather than a model-size problem: check chrome://gpu for driver warnings, update your graphics driver, or try a different device/browser."
+  );
+  allFailed.allModelsFailed = true;
+  allFailed.original = lastError;
+  throw allFailed;
 }
 
 /** Unload the model to free GPU/RAM (e.g. when leaving the Copilot page). */
