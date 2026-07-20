@@ -1,37 +1,15 @@
-{
-  "name": "healnet-frontend",
-  "version": "1.0.0",
-  "private": true,
-  "homepage": "./",
-  "dependencies": {
-    "@capacitor/android": "^6.2.0",
-    "@capacitor/cli": "^6.2.0",
-    "@capacitor/core": "^6.2.0",
-    "@codetrix-studio/capacitor-google-auth": "3.4.0-rc.4",
-    "@mlc-ai/web-llm": "^0.2.84",
-    "@xenova/transformers": "^2.17.2",
-    "axios": "^1.6.7",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1",
-    "recharts": "^2.12.2"
-  },
-  "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  }
+"dependencies": {
+  "@capacitor/android": "^6.2.0",
+  "@capacitor/cli": "^6.2.0",
+  "@capacitor/core": "^6.2.0",
+  "@codetrix-studio/capacitor-google-auth": "3.4.0-rc.4",
+  "@mlc-ai/web-llm": "^0.2.84",
+  "@xenova/transformers": "^2.17.2",
+  "axios": "^1.6.7",
+  "jsqr": "^1.4.0",
+  "qrcode": "^1.5.4",
+  "react": "^18.2.0",
+  "react-dom": "^18.2.0",
+  "react-scripts": "5.0.1",
+  "recharts": "^2.12.2"
 }
