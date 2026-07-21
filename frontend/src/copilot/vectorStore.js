@@ -19,13 +19,15 @@
  * ───────────────────────────────────────────────────────────────────
  */
 
+import { importWithChunkRecovery } from "./chunkRecovery";
+
 const EMBED_MODEL = "Xenova/all-MiniLM-L6-v2";
 
 let extractorPromise = null;
 function getExtractor(onProgress) {
   if (!extractorPromise) {
     extractorPromise = (async () => {
-      const { pipeline, env } = await import("@xenova/transformers");
+      const { pipeline, env } = await importWithChunkRecovery(() => import("@xenova/transformers"));
       // Always fetch models from the HF CDN rather than expecting local files.
       env.allowLocalModels = false;
       return pipeline("feature-extraction", EMBED_MODEL, {
