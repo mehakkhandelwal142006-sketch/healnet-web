@@ -19,6 +19,8 @@
 // enough to crash the tab. getEngine() below loads it dynamically,
 // only when an engine is actually about to be created.
 
+import { importWithChunkRecovery } from "./chunkRecovery";
+
 // Small, fast, good-quality instruction models that run well on a
 // mid-range laptop/phone GPU. Phi-3.5 is the default: strong reasoning
 // for its size. Gemma-2-2B and SmolLM2-360M are progressively lighter
@@ -174,7 +176,7 @@ export function getEngine(modelKey = "phi-3.5", onProgress) {
 
   const createPromise = (async () => {
     const { modelId, usesF16 } = await resolveModelVariant(modelKey);
-    const { CreateMLCEngine } = await import("@mlc-ai/web-llm");
+    const { CreateMLCEngine } = await importWithChunkRecovery(() => import("@mlc-ai/web-llm"));
     return CreateMLCEngine(modelId, {
       initProgressCallback: (report) => {
         const prefix = usesF16 ? "" : "[Compatibility mode] ";
