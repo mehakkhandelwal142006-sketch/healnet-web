@@ -67,30 +67,34 @@ export function isWebGPUAvailable() {
 
 /**
  * Best-effort read of how constrained this device likely is, so we can
- * warn (or steer users to desktop) *before* attempting to load a
- * multi-GB model — rather than letting Android's low-memory killer
- * silently crash the whole tab ("Aw, Snap!") mid-load, which happens
- * too fast for any JS error handler to catch.
+ * warn (or steer users to the cloud fallback) *before* attempting to
+ * load a multi-GB model.
+ *
+ * IMPORTANT: on mobile we now flag EVERY device as likely-insufficient,
+ * regardless of reported deviceMemory. In practice, WebGPU on Android
+ * has shown real crashes ("Aw, Snap!" full tab kill) even on devices
+ * that report decent memory — the crash is a hard browser-process
+ * kill, not a catchable JS error, so no amount of try/catch downstream
+ * can protect against it once it starts. Rather than gamble per-device
+ * on an imperfect heuristic, mobile always defaults to the reliable
+ * cloud-based fallback; local AI is available as an explicit,
+ * clearly-labeled "try anyway" opt-in for anyone who wants to attempt it.
  *
  * navigator.deviceMemory (Chrome/Android only, rounded to
- * 0.25/0.5/1/2/4/8...) is our best signal but isn't available on
- * iOS/Safari/Firefox, so we combine it with a simple mobile UA check.
- * This is a heuristic, not a guarantee — always pair it with a way
- * for the user to proceed anyway.
+ * 0.25/0.5/1/2/4/8...) isn't available on iOS/Safari/Firefox either,
+ * so it was never a fully reliable signal to begin with.
  */
 export function getDeviceProfile() {
   const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
   const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
   const deviceMemoryGB = typeof navigator !== "undefined" ? navigator.deviceMemory : undefined;
 
-  // On mobile, treat missing deviceMemory (common on iOS) or <=4GB as
-  // likely insufficient for a 1.6-2.5GB model plus the embedding model
-  // plus the app itself, all inside one Chrome tab's memory budget.
-  // On desktop, only flag when deviceMemory is reported AND clearly low
-  // (a lot of desktop Chrome installs simply don't expose this API, so
+  // Mobile: always steer to the safe cloud fallback by default (see note
+  // above). Desktop: only flag when deviceMemory is reported AND clearly
+  // low (many desktop Chrome installs don't expose this API at all, so
   // "undefined" shouldn't block desktop the way it does mobile).
   const likelyInsufficientMemory = isMobile
-    ? (deviceMemoryGB === undefined || deviceMemoryGB <= 4)
+    ? true
     : (deviceMemoryGB !== undefined && deviceMemoryGB <= 2);
 
   return { isMobile, deviceMemoryGB, likelyInsufficientMemory };
