@@ -230,11 +230,12 @@ export default function CopilotPage({ patients = [] }) {
       <div>
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 32, textAlign: "center", marginBottom: 20 }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>📱</div>
-          <h3 style={{ color: C.warn, margin: "0 0 10px" }}>This device may not have enough memory</h3>
+          <h3 style={{ color: C.warn, margin: "0 0 10px" }}>Local AI works best on desktop</h3>
           <p style={{ color: C.muted, maxWidth: 480, margin: "0 auto", lineHeight: 1.6 }}>
-            The on-device AI model is 0.6–2.5GB and needs to fit in your browser tab's memory alongside
-            the app itself. On phones this often crashes the tab entirely rather than showing an error.
-            For the best experience, use the Copilot on a <strong style={{ color: C.text }}>laptop or desktop</strong>.
+            On-device AI models are 0.6–2.5GB and need real GPU support to run reliably. On phones,
+            this can crash the browser tab entirely rather than showing a normal error — so we're
+            showing your reliable cloud-based analysis below instead. For the local/offline
+            experience, try the Copilot on a <strong style={{ color: C.text }}>laptop or desktop</strong>.
           </p>
           <button
             onClick={() => setProceedAnyway(true)}
@@ -244,10 +245,10 @@ export default function CopilotPage({ patients = [] }) {
               color: C.muted, fontSize: 13, cursor: "pointer",
             }}
           >
-            Try anyway (may crash the tab)
+            Try local AI anyway (experimental — may crash this tab)
           </button>
         </div>
-        <p style={{ color: C.muted, fontSize: 13, marginBottom: 12 }}>In the meantime, here's your cloud-based AI analysis:</p>
+        <p style={{ color: C.muted, fontSize: 13, marginBottom: 12 }}>Your cloud-based AI analysis:</p>
         {patientId && <AIPanel patientId={patientId} />}
       </div>
     );
