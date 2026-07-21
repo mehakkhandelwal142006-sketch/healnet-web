@@ -53,6 +53,7 @@ export default function CopilotPage({ patients = [] }) {
   const [input, setInput]         = useState("");
   const [streaming, setStreaming] = useState(false);
   const chatEndRef = useRef(null);
+  const fallbackPanelRef = useRef(null);
   const initializingRef = useRef(false);
 
   const gpuOk = isWebGPUAvailable();
@@ -66,6 +67,10 @@ export default function CopilotPage({ patients = [] }) {
   }, [messages, streaming]);
 
   useEffect(() => () => { unloadEngine(); }, []); // unload model when leaving page
+
+  useEffect(() => {
+    if (driverIssue) fallbackPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [driverIssue]);
 
 
   const initialize = useCallback(async () => {
@@ -319,15 +324,6 @@ export default function CopilotPage({ patients = [] }) {
         )}
       </div>
 
-      {driverIssue && patientId && (
-        <div style={{ marginBottom: 20 }}>
-          <p style={{ color: C.muted, fontSize: 13, marginBottom: 12 }}>
-            Local AI isn't working on this device right now — here's your cloud-based AI analysis instead:
-          </p>
-          <AIPanel patientId={patientId} />
-        </div>
-      )}
-
       {/* ── Quick actions ── */}
       {stage === "ready" && (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
@@ -385,6 +381,18 @@ export default function CopilotPage({ patients = [] }) {
               Send
             </button>
           </div>
+        </div>
+      )}
+
+      {driverIssue && patientId && (
+        <div ref={fallbackPanelRef} style={{
+          marginTop: 20, padding: 20, borderRadius: 16,
+          background: "rgba(255,209,102,0.06)", border: `1px solid ${C.warn}55`,
+        }}>
+          <p style={{ color: C.warn, fontSize: 14, fontWeight: 700, marginTop: 0, marginBottom: 12 }}>
+            ⚠️ Local AI isn't working on this device — here's your cloud-based AI analysis instead:
+          </p>
+          <AIPanel patientId={patientId} />
         </div>
       )}
 
