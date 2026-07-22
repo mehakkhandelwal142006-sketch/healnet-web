@@ -106,10 +106,20 @@ export function getDeviceProfile() {
  * True if this error looks like a WebGPU "device lost" / disposed-object
  * error, as opposed to some other failure (network, parsing, etc).
  * These happen when the GPU runs out of memory, the OS/browser reclaims
- * the device mid-load, or the driver itself times out the GPU (Windows
- * TDR — "device hung"). They leave the previous engine instance
- * permanently unusable (any further call throws "Object has already
- * been disposed").
+ * the device mid-load, the driver times out (Windows TDR — "device
+ * hung"), or the device is removed/reset by the OS ("device removed").
+ * They leave the previous engine instance permanently unusable (any
+ * further call throws "Object has already been disposed").
+ *
+ * IMPORTANT: this list previously missed DXGI_ERROR_DEVICE_REMOVED,
+ * which turned out to be one of the MOST common real-world failures
+ * (seen across multiple different machines) — when unrecognized, it
+ * broke the fallback cascade early and skipped the cloud-AI fallback
+ * entirely, since the code assumed it was some other, non-hardware
+ * failure. Rather than keep adding error codes one at a time as more
+ * turn up, this also matches on the general low-level signatures
+ * (dxgi_error, d3d12, requestdevice failure) so future unlisted DXGI
+ * codes are still caught.
  */
 export function isDeviceLostError(e) {
   const msg = String(e?.message || e || "").toLowerCase();
@@ -120,7 +130,15 @@ export function isDeviceLostError(e) {
     msg.includes("gpudevicelostinfo") ||
     msg.includes("out of memory") ||
     msg.includes("device_hung") ||
-    msg.includes("device hung")
+    msg.includes("device hung") ||
+    msg.includes("device_removed") ||
+    msg.includes("device removed") ||
+    msg.includes("dxgi_error") ||
+    msg.includes("d3d12") ||
+    msg.includes("requestdevice") ||
+    msg.includes("requestadapter") ||
+    msg.includes("checkhresultimpl") ||
+    msg.includes("gpuadapter")
   );
 }
 
@@ -210,9 +228,9 @@ export function resetEngine() {
  * resolves with the full text at the end.
  */
 export async function streamChat({ modelKey, messages, onToken, onProgress, temperature = 0.4 }) {
-  const engine = await getEngine(modelKey, onProgress);
-
   try {
+    const engine = await getEngine(modelKey, onProgress);
+
     const chunks = await engine.chat.completions.create({
       messages,
       temperature,
